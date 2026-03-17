@@ -17,7 +17,7 @@ func (resp *RespHandler) Handle(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	// buf := make([]byte, 1024) conn.Read(buf)
-	//
+	// 为什么不用自带的conn.read？
 	for {
 		msg, err := reader.ReadString('\n')
 		if err == io.EOF {
