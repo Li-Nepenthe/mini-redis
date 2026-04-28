@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Mini-Redis 核心数据流转全景图</title>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+    </script>
+    <style>
+        body { background-color: #1e1e1e; color: #d4d4d4; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; }
+        .mermaid { background-color: #252526; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        h2 { color: #569cd6; }
+    </style>
+</head>
+<body>
+<h2>Mini-Redis 高并发架构与数据生命周期</h2>
+<div class="mermaid">
+    sequenceDiagram
+    autonumber
+    participant Client as mock_client.go (客户端)
+    box rgb(60, 60, 60) 网络层 (tcp)
+    participant Server as tcp/server.go (TCP 监听池)
+    end
+    box rgb(40, 60, 80) 协议解析层 (resp)
+    participant Handler as resp/handler.go (业务分发)
+    participant Parser as resp/parser.go (ParseStream 协程)
+    participant Channel as Payload Channel (<-chan)
+    end
+    box rgb(80, 40, 40) 数据存储层 (database)
+    participant Engine as database/engine.go (引擎层-未完成)
+    end
+
+    Client->>Server: 1. 发起 TCP 连接
+    Server-->>Handler: 2. Accept() 成功, 启动新协程 go Handle(conn)
+    Handler->>Parser: 3. 调用 ParseStream(conn)
+    Parser-->>Channel: 4. 初始化 make(chan *Payload) 并返回给 Handler
+
+    note right of Handler: Handler 此时进入 for payload := range ch 的阻塞等待状态
+
+    Client->>Parser: 5. 发送指令流 (例如: *2\r\n$4\r\nPING\r\n)
+
+    loop 解析流水线 (后台匿名 Goroutine)
+    Parser->>Parser: 6. bufReader.ReadBytes('\n') 零拷贝截断 \r\n
+    Parser->>Channel: 7. 组装 Payload 发送到 Channel
+    end
+
+    Channel-->>Handler: 8. 管道流出 Payload 数据
+    Handler->>Engine: 9. (未来) 将结构化命令分发给存储引擎执行
+    Engine-->>Client: 10. (未来) 返回 +PONG\r\n 结果
+
+    note over Client, Server: 客户端断开连接 / EOF
+    Parser->>Channel: 11. 捕获 err != nil, 发送带 Err 的 Payload 并 break
+    Parser->>Parser: 12. 触发 defer close(channel)
+    Channel-->>Handler: 13. range 循环自动结束, 协程优雅退出
+</div>
+</body>
+</html>

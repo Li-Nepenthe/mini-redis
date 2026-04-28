@@ -77,7 +77,7 @@ func (s *Server) ListenAndServe() {
 			// 其他连接正常进行
 			continue
 		}
-		// 创建协程处理该请求
+		// 创建协程 把当前的conn传递给协程的hander处理
 		go s.Handler.Handle(conn)
 	}
 }
