@@ -2,7 +2,7 @@ package resp
 
 import (
 	"bufio"
-	"fmt"
+	"bytes"
 	"io"
 )
 
@@ -17,7 +17,10 @@ type Payload struct {
 
 func ParseStream(reader io.Reader) <-chan *Payload {
 	channel := make(chan *Payload)
-	// 当前的reader底层是net.Conn（TCP的网络套接字） 如果调用read.Read(buf)时 Go会向操作系统申请系统调用
+
+	// conn实现了 Read(p []byte) (n int, err error) 方法 所以满足了io.Reader的接口要求
+
+	// 当前的reader底层是net.Conn（TCP的网络套接字） 如果调用reader.Read(buf) (即conn.Read(buf))时 Go会向操作系统申请系统调用
 	// 这会使操作系统从用户态转为内核态并从网卡缓冲区搬运数据然后再切换为用户态 即会发生目态 管态 目态的频繁切换 每次变态开销很大
 
 	// 而bufReader是一个具体的结构体， bufio.NewReader(reader)在用户态下的内存中创建了一个bufio.Reader对象
@@ -30,7 +33,7 @@ func ParseStream(reader io.Reader) <-chan *Payload {
 		defer close(channel)
 		for {
 			// bufio会不断从底层读取数据直到遇见指定的delim界定符
-			msg, err := bufReader.ReadBytes('\n')
+			line, err := bufReader.ReadBytes('\n')
 			// 如果在找到delim之前 触碰到文件末尾 会返回io.EOF错误
 			// 但是无论网络波动还是合法的EOF退出  当前这连接的解析流水线就必须宣告终止
 			if err != nil {
@@ -41,13 +44,31 @@ func ParseStream(reader io.Reader) <-chan *Payload {
 				// 跳出循环 执行close
 				break
 			}
-			length := len(msg)
-			//如果当前的msg长度大于2 且最后两个为界定符 则剔除
-			if length >= 2 && msg[length-2] == '\r' && msg[length-1] == '\n' {
-				//剔除最后两个字节
-				msg = msg[:length-2]
+			// 去除掉后缀的\r\n
+			line = bytes.TrimSuffix(line, []byte("\r\n"))
+			if len(line) == 0 {
+				// 如果数据为空 则继续接受数据
+				continue
 			}
-			fmt.Println("截断后的有效数据为:", msg)
+			/**
+			Redis 的网络协议叫做 RESP（Redis Serialization Protocol，Redis序列化协议）
+			redis规定第一个字符只能为以下五种
+				+	简单字符串信息 比如服务器回复 +OK\r\n
+				-	错误信息 比如服务器报错 -ERR Unknown Command\r\n
+				:	整数 比如回复长度或计数 :1000\r\n
+				$	块字符串(Bulk Strings) 二进制安全的字符串，后面会紧跟长度（如 $5\r\nhello\r\n）
+				*	数组
+			对于Redis  客户端发来的任何命令本质是都是一个字符串数组
+			如 SET name Gemini --> *3\r\n$3\r\nSET\r\n$4\r\nname\r\n$6\r\nGemini\r\n
+
+			第一步：看到*3\r\n 知道传过来的是一个数组 长度为3 在堆内存中分配空间 args := make([][]byte, 3) 启动接下来启动一个执行 3 次的 for 循环，去装这 3 个参数
+			第二步：看到$3\r\n 知道传过来的是一个块字符串 且长度为3 于是arg[0] = SET
+			第三步，第四步以此类推 arg[1] =name arg[2] = Gemini
+			*/
+
+			if line[0] == '*' {
+
+			}
 		}
 	}()
 	return channel

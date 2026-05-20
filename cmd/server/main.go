@@ -12,5 +12,4 @@ func main() {
 	server := tcp.NewServer(":6379", handler)
 	fmt.Println("开始监听....")
 	server.ListenAndServe()
-	fmt.Println("这是笔记本的更新")
 }
