@@ -3,7 +3,9 @@ package resp
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io"
+	"strconv"
 )
 
 type Payload struct {
@@ -18,7 +20,7 @@ type Payload struct {
 func ParseStream(reader io.Reader) <-chan *Payload {
 	channel := make(chan *Payload)
 
-	// conn实现了 Read(p []byte) (n int, err error) 方法 所以满足了io.Reader的接口要求
+	// Conn实现了 Read(p []byte) (n int, err error) 方法 所以满足了io.Reader的接口要求
 
 	// 当前的reader底层是net.Conn（TCP的网络套接字） 如果调用reader.Read(buf) (即conn.Read(buf))时 Go会向操作系统申请系统调用
 	// 这会使操作系统从用户态转为内核态并从网卡缓冲区搬运数据然后再切换为用户态 即会发生目态 管态 目态的频繁切换 每次变态开销很大
@@ -33,9 +35,19 @@ func ParseStream(reader io.Reader) <-chan *Payload {
 		defer close(channel)
 		for {
 			// bufio会不断从底层读取数据直到遇见指定的delim界定符
-			line, err := bufReader.ReadBytes('\n')
 			// 如果在找到delim之前 触碰到文件末尾 会返回io.EOF错误
 			// 但是无论网络波动还是合法的EOF退出  当前这连接的解析流水线就必须宣告终止
+			// bufReader的缺点就是只能通过识别指定的结束符来完成读取的结束 这就带来了麻烦即如果用的传过来的内容如果包含结束符的话就会意外结束识别 造成严重问题
+			// 解决方法就是 第一个传来的是resp协议根据数据内容得到的协议数据 这个是不包含用户内容的 我们可以利用bufReader读取这一个数据 得到整体的数据信息
+			// 然后再利用io.ReadFull读取传来的数据
+			line, err := bufReader.ReadBytes('\n')
+
+			// bufReader.ReadBytes只读取第一个\n
+			// 比如要传输hello world 通过resp协议转换为*2\r\n$5hello\r\n$5world\r\n
+			// 首先通过ReadBytes读取到了*2\r\n 此时line的内容即为*2\r\n
+			// 然后我们对line的内容进行分析 首先判断开头是* 则紧接着的数据就是需要创建的字节数组的大小 bytes := make([][]byte,2)
+			// 接着就是利用io.ReadFull读取bufReader中剩余的元素 利用$的数字大小确定传输的内容
+
 			if err != nil {
 				//将错误通过chan传递给业务层
 				channel <- &Payload{
@@ -44,12 +56,7 @@ func ParseStream(reader io.Reader) <-chan *Payload {
 				// 跳出循环 执行close
 				break
 			}
-			// 去除掉后缀的\r\n
-			line = bytes.TrimSuffix(line, []byte("\r\n"))
-			if len(line) == 0 {
-				// 如果数据为空 则继续接受数据
-				continue
-			}
+
 			/**
 			Redis 的网络协议叫做 RESP（Redis Serialization Protocol，Redis序列化协议）
 			redis规定第一个字符只能为以下五种
@@ -66,8 +73,18 @@ func ParseStream(reader io.Reader) <-chan *Payload {
 			第三步，第四步以此类推 arg[1] =name arg[2] = Gemini
 			*/
 
-			if line[0] == '*' {
+			// 去除掉后缀的\r\n
+			line = bytes.TrimSuffix(line, []byte("\r\n"))
 
+			if len(line) == 0 {
+				// 如果数据为空 则继续接受数据
+				continue
+			}
+			if line[0] == '*' {
+				// 提取出后面的长度
+				length, _ := strconv.Atoi(string(line[1:]))
+				msgBytes := make([][]byte, length)
+				fmt.Println(msgBytes)
 			}
 		}
 	}()
