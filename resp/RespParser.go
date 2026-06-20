@@ -3,7 +3,6 @@ package resp
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"io"
 	"strconv"
 )
@@ -13,11 +12,18 @@ type Payload struct {
 	Err  error    //向上传递底层的网络或者解析错误
 }
 
+type RespParser struct {
+}
+
+func NewRespParser() *RespParser {
+	return &RespParser{}
+}
+
 // chan *Payload 双向通道  既能读又能写
 // <-chan *Payload 只读通道 箭头从chan射出 表示数据只流出
 // chan <- 只写通道 表示数据只流入
 
-func ParseStream(reader io.Reader) <-chan *Payload {
+func (p *RespParser) ParseStream(reader io.Reader) <-chan *Payload {
 	channel := make(chan *Payload)
 
 	// Conn实现了 Read(p []byte) (n int, err error) 方法 所以满足了io.Reader的接口要求
@@ -40,13 +46,16 @@ func ParseStream(reader io.Reader) <-chan *Payload {
 			// bufReader的缺点就是只能通过识别指定的结束符来完成读取的结束 这就带来了麻烦即如果用的传过来的内容如果包含结束符的话就会意外结束识别 造成严重问题
 			// 解决方法就是 第一个传来的是resp协议根据数据内容得到的协议数据 这个是不包含用户内容的 我们可以利用bufReader读取这一个数据 得到整体的数据信息
 			// 然后再利用io.ReadFull读取传来的数据
+
+			// 以*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$6\r\nGemini\r\n为例
 			line, err := bufReader.ReadBytes('\n')
+			// 此时的line为*3\r\n
 
 			// bufReader.ReadBytes只读取第一个\n
 			// 比如要传输hello world 通过resp协议转换为*2\r\n$5hello\r\n$5world\r\n
 			// 首先通过ReadBytes读取到了*2\r\n 此时line的内容即为*2\r\n
 			// 然后我们对line的内容进行分析 首先判断开头是* 则紧接着的数据就是需要创建的字节数组的大小 bytes := make([][]byte,2)
-			// 接着就是利用io.ReadFull读取bufReader中剩余的元素 利用$的数字大小确定传输的内容
+			// 接着就是利用io.ReadFull读取bufReader中剩余的元素 利用$的数字 大小确定传输的内容
 
 			if err != nil {
 				//将错误通过chan传递给业务层
@@ -73,18 +82,39 @@ func ParseStream(reader io.Reader) <-chan *Payload {
 			第三步，第四步以此类推 arg[1] =name arg[2] = Gemini
 			*/
 
-			// 去除掉后缀的\r\n
+			// 去除掉后缀的\r\n 此时的line为*3
 			line = bytes.TrimSuffix(line, []byte("\r\n"))
 
 			if len(line) == 0 {
 				// 如果数据为空 则继续接受数据
 				continue
 			}
+			// 判断传过来的是数组
 			if line[0] == '*' {
-				// 提取出后面的长度
-				length, _ := strconv.Atoi(string(line[1:]))
-				msgBytes := make([][]byte, length)
-				fmt.Println(msgBytes)
+				// 提取出数组的长度
+				msgLength, _ := strconv.Atoi(string(line[1:]))
+				// 创建对应长度的数组大小
+				msgBytes := make([][]byte, msgLength)
+				// 通过for循环拿到后续的三个参数
+				for i := 0; i < msgLength; i++ {
+					// $3\r\nSET\r\n$4\r\nname\r\n$6\r\nGemini\r\n
+					// 依次读出$3\r\n
+					param, _ := bufReader.ReadBytes('\n')
+					param = bytes.TrimSuffix(param, []byte("\r\n"))
+					// 拿到当前的长度大小 比如SET 读取为3
+					curLength, _ := strconv.Atoi(string(param[1:]))
+					//读取当前长度加2 （\r\n）
+					contentBuf := make([]byte, curLength+2)
+					// 利用ReadFull读取指定长度SET\r\n
+					_, _ = io.ReadFull(bufReader, contentBuf)
+					//只获取前面的内容
+					msgBytes[i] = contentBuf[:curLength] //SET
+				}
+
+				// 将收集好的数组通过chan传回
+				channel <- &Payload{
+					Data: msgBytes,
+				}
 			}
 		}
 	}()
