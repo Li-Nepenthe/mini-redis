@@ -9,7 +9,7 @@ import (
 // 业务多态
 
 type CommandExecutor interface {
-	Exec(args [][]byte) []byte
+	Exec(args [][]byte) (any, error)
 }
 
 // 协议多态
@@ -54,9 +54,15 @@ func (resp *RespHandler) Handle(conn net.Conn) {
 		if len(payload.Data) == 0 {
 			continue
 		}
-		replyBytes := resp.executor.Exec(payload.Data)
-		//将响应结果写回
-		conn.Write(replyBytes)
+
+		result, err := resp.executor.Exec(payload.Data)
+
+		if err != nil {
+			// 这里要做类型判断
+			v, _ := result.([]byte)
+			//将响应结果写回
+			conn.Write(v)
+		}
 	}
 }
 
