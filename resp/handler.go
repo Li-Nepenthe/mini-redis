@@ -38,7 +38,6 @@ func (resp *RespHandler) Handle(conn net.Conn) {
 			fmt.Println(err)
 		}
 	}(conn)
-
 	// 拿到只读管道Payload
 	ch := resp.parser.ParseStream(conn)
 	// 不断从管道中读取数据
@@ -47,7 +46,10 @@ func (resp *RespHandler) Handle(conn net.Conn) {
 		if payload.Err != nil {
 			// 如果中途解析报错（比如客户端断开或传了乱码），打印并回送错误，结束循环
 			fmt.Println("解析发生错误:", payload.Err)
-			conn.Write([]byte("-ERR " + payload.Err.Error() + "\r\n"))
+			_, err := conn.Write([]byte("-ERR " + payload.Err.Error() + "\r\n"))
+			if err != nil {
+				return
+			}
 			return
 		}
 
@@ -55,13 +57,20 @@ func (resp *RespHandler) Handle(conn net.Conn) {
 			continue
 		}
 
-		result, err := resp.executor.Exec(payload.Data)
+		// 接engine解析过后传来的数据
+		result, execErr := resp.executor.Exec(payload.Data)
+		// 将传来的信息和错误放入标准解码器进行解构处理
+		reply, encodeErr := EncodeReply(result, execErr)
 
-		if err != nil {
-			// 这里要做类型判断
-			v, _ := result.([]byte)
-			//将响应结果写回
-			conn.Write(v)
+		// 如果错误 则输出错误信息
+		if encodeErr != nil {
+			fmt.Println("编码响应失败", encodeErr)
+			return
+		}
+		// 没有错误，reply写回客户端
+		if _, writeErr := conn.Write(reply); writeErr != nil {
+			fmt.Println("写回客户端失败，原因：", writeErr)
+			return
 		}
 	}
 }

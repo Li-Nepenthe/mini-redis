@@ -5,8 +5,7 @@ import (
 )
 
 // SET和GET 用最原始的map就能实现
-// 但为了实现redis的LPUSH/LPOP操作 我们需要定义一个双向链表
-
+// 但为了实现redis的LPush/LPop操作 我们需要定义一个双向链表
 // 原先整个engine只有一个map 一个锁 如果并发数量过高 比如十万个并发请求都要进行set操作，
 // 则这十万个goroutine 会在cpu调动时被排成一条单行道 逐一执行 从而闲置多核CPU
 // 现在对engine进行封装，对外暴露仍然是一个engine，宏观上无论是http或者redis 都是共享一个map
