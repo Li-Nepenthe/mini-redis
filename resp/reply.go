@@ -32,13 +32,13 @@ func EncodeReply(result any, execErr error) ([]byte, error) {
 		return reply, nil
 	case bool: // value 的类型是 bool 只有SET会返回 且一般情况是为true
 		if !value {
-			return nil, fmt.Errorf("unexpected boolean result")
+			return nil, fmt.Errorf("出现非预期的布尔结果")
 		}
 		return []byte("+OK\r\n"), nil
 	case int: // LPUSH 返回的是 int 表示
 		return []byte(":" + strconv.Itoa(value) + "\r\n"), nil
 	default:
 		// 不支持的类型
-		return nil, fmt.Errorf("unexpected type: %T", value)
+		return nil, fmt.Errorf("不支持的返回类型：%T", value)
 	}
 }

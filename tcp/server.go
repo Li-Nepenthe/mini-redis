@@ -73,7 +73,7 @@ func (s *Server) ListenAndServe() {
 				time.Sleep(5 * time.Millisecond)
 				continue
 			}
-			fmt.Println("Accept error:", err)
+			fmt.Println("接收连接失败：", err)
 			// 其他连接正常进行
 			continue
 		}

@@ -2,6 +2,7 @@ package resp
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -28,14 +29,44 @@ func TestEncodeReply(parentT *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:   "nil result becomes null bulk string",
+			name:   "nil 结果编码为空块字符串",
 			result: nil,
 			want:   []byte("$-1\r\n"),
 		},
 		{
-			name:   "byte slice becomes bulk string",
+			name:   "字节切片编码为块字符串",
 			result: []byte("hello"),
 			want:   []byte("$5\r\nhello\r\n"),
+		},
+		{
+			name:   "返回长度3",
+			result: 3,
+			want:   []byte(":3\r\n"),
+		},
+		{
+			name:   "返回true",
+			result: true,
+			want:   []byte("+OK\r\n"),
+		},
+		{
+			name:   "返回空[]byte",
+			result: []byte{},
+			want:   []byte("$0\r\n\r\n"),
+		},
+		{
+			name:    "错误非空",
+			execErr: errors.New("错误非空"),
+			want:    []byte("-ERR 错误非空\r\n"),
+		},
+		{
+			name:    "拒绝false  不支持的类型",
+			result:  false,
+			wantErr: true,
+		},
+		{
+			name:    "拒绝string类型",
+			result:  "hello",
+			wantErr: true,
 		},
 	}
 
@@ -43,15 +74,16 @@ func TestEncodeReply(parentT *testing.T) {
 		// 含义：parentT 请帮我运行一个名字叫 tt.name 的子测试。
 		parentT.Run(tt.name, func(caseT *testing.T) { // 这是子测试要执行的代码
 			got, err := EncodeReply(tt.result, tt.execErr)
+			// 这个表达式的含义就是如果错误存在 是否符合预期的存在
 			if (err != nil) != tt.wantErr {
-				caseT.Fatalf("EncodeReply() error = %v, wantErr = %v", err, tt.wantErr)
+				caseT.Fatalf("EncodeReply() 返回错误 = %v，是否预期错误 = %v", err, tt.wantErr)
 			}
 			if tt.wantErr {
 				return
 			}
 			// 因为[]byte 不能直接用 == 比较内容，所以用它判断两个字节数组是否完全一致
 			if !bytes.Equal(got, tt.want) {
-				caseT.Fatalf("EncodeReply() = %q, want %q", got, tt.want)
+				caseT.Fatalf("EncodeReply() 返回值 = %q，预期值 = %q", got, tt.want)
 			}
 		})
 	}

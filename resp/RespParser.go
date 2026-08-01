@@ -3,6 +3,8 @@ package resp
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"strconv"
 )
@@ -12,18 +14,18 @@ type Payload struct {
 	Err  error    //向上传递底层的网络或者解析错误
 }
 
-type RespParser struct {
+type Parser struct {
 }
 
-func NewRespParser() *RespParser {
-	return &RespParser{}
+func NewRespParser() *Parser {
+	return &Parser{}
 }
 
 // chan *Payload 双向通道  既能读又能写
 // <-chan *Payload 只读通道 箭头从chan射出 表示数据只流出
 // chan <- 只写通道 表示数据只流入
 
-func (p *RespParser) ParseStream(reader io.Reader) <-chan *Payload {
+func (p *Parser) ParseStream(reader io.Reader) <-chan *Payload {
 	channel := make(chan *Payload)
 
 	// Conn实现了 Read(p []byte) (n int, err error) 方法 所以满足了io.Reader的接口要求
@@ -58,9 +60,15 @@ func (p *RespParser) ParseStream(reader io.Reader) <-chan *Payload {
 			// 接着就是利用io.ReadFull读取bufReader中剩余的元素 利用$的数字 大小确定传输的内容
 
 			if err != nil {
-				//将错误通过chan传递给业务层
+				// 没有残留数据 则说明输入正常结束
+				// 必须判断len(line) == 0 因为完整命令结束后再次读取->line为空+EOF --> 正常结束
+				if errors.Is(err, io.EOF) && len(line) == 0 {
+					return
+				}
+
+				// 有残留数据 或者发生其他读取错误 将错误通过chan传递给业务层
 				channel <- &Payload{
-					Err: err,
+					Err: fmt.Errorf("protocol error: incomplete command: %v", err),
 				}
 				// 跳出循环 执行close
 				break
@@ -89,33 +97,85 @@ func (p *RespParser) ParseStream(reader io.Reader) <-chan *Payload {
 				// 如果数据为空 则继续接受数据
 				continue
 			}
+
+			if line[0] != '*' {
+				channel <- &Payload{
+					Err: fmt.Errorf("protocol error: expected array, got %q", line),
+				}
+				break
+			}
+
 			// 判断传过来的是数组
-			if line[0] == '*' {
-				// 提取出数组的长度
-				msgLength, _ := strconv.Atoi(string(line[1:]))
-				// 创建对应长度的数组大小
-				msgBytes := make([][]byte, msgLength)
-				// 通过for循环拿到后续的三个参数
-				for i := 0; i < msgLength; i++ {
-					// $3\r\nSET\r\n$4\r\nname\r\n$6\r\nGemini\r\n
-					// 依次读出$3\r\n
-					param, _ := bufReader.ReadBytes('\n')
-					param = bytes.TrimSuffix(param, []byte("\r\n"))
-					// 拿到当前的长度大小 比如SET 读取为3
-					curLength, _ := strconv.Atoi(string(param[1:]))
-					//读取当前长度加2 （\r\n）
-					contentBuf := make([]byte, curLength+2)
-					// 利用ReadFull读取指定长度SET\r\n
-					_, _ = io.ReadFull(bufReader, contentBuf)
-					//只获取前面的内容
-					msgBytes[i] = contentBuf[:curLength] //SET
+			// 提取出数组的长度 如果提取的不是数字 则说明产生错误
+			msgLength, err := strconv.Atoi(string(line[1:]))
+			if err != nil {
+				channel <- &Payload{
+					Err: fmt.Errorf("protocol error: expected array, got %q", line[1:]),
+				}
+				// 发生错误后就不该继续了
+				return
+			}
+			// 创建对应长度的数组大小
+			msgBytes := make([][]byte, msgLength)
+			// 通过for循环拿到后续的三个参数
+			for i := 0; i < msgLength; i++ {
+				// $3\r\nSET\r\n$4\r\nname\r\n$6\r\nGemini\r\n
+				// 依次读出$3\r\n
+
+				// 如果这里不是数字3 则意味着非法的
+				param, err := bufReader.ReadBytes('\n')
+				// 如果出现错误 则说明内容不完整
+				if err != nil {
+					channel <- &Payload{
+						Err: fmt.Errorf("protocol error: incomplete bulk header: %v", err),
+					}
+					return
 				}
 
-				// 将收集好的数组通过chan传回
-				channel <- &Payload{
-					Data: msgBytes,
+				param = bytes.TrimSuffix(param, []byte("\r\n"))
+
+				if len(param) == 0 || param[0] != '$' {
+					channel <- &Payload{
+						Err: fmt.Errorf("protocol error: expected $, got %q", param),
+					}
+					return
 				}
+				// 拿到当前的长度大小 比如SET 读取为3
+				curLength, err := strconv.Atoi(string(param[1:]))
+				if err != nil {
+					channel <- &Payload{
+						Err: fmt.Errorf("protocol error: expected array, got %q", param[1:]),
+					}
+					// 发生错误后就不应该继续了
+					return
+				}
+				//读取当前长度加2 （\r\n）
+				contentBuf := make([]byte, curLength+2)
+				// 利用ReadFull读取指定长度SET\r\n
+				_, err = io.ReadFull(bufReader, contentBuf)
+				// 如果出现err 则说明contentBuf并未填满 即内容缺失
+				if err != nil {
+					channel <- &Payload{
+						Err: fmt.Errorf("protocol error: incomplete bulk content: %v", err),
+					}
+					return
+				}
+				// 如果contentBuf 不以\r\n结尾 则报错
+				if !bytes.HasSuffix(contentBuf, []byte("\r\n")) {
+					channel <- &Payload{
+						Err: fmt.Errorf("protocol error: bulk content missing CRLF"),
+					}
+					return
+				}
+
+				//只获取前面的内容
+				msgBytes[i] = contentBuf[:curLength] //SET
 			}
+			// 将收集好的数组通过chan传回
+			channel <- &Payload{
+				Data: msgBytes,
+			}
+
 		}
 	}()
 	return channel

@@ -71,13 +71,13 @@ func main() {
 		// 根据 RESP 协议的第一个字符，进行外科手术式精准打印！
 		switch replyLine[0] {
 		case '+': // 状态回复
-			fmt.Printf("Status: %s\n", string(replyLine[1:]))
+			fmt.Printf("状态：%s\n", string(replyLine[1:]))
 		case '-': // 错误回复
-			fmt.Printf("(error) %s\n", string(replyLine[1:]))
+			fmt.Printf("（错误）%s\n", string(replyLine[1:]))
 		case '$': // 块字符串回复
 			length, _ := strconv.Atoi(string(replyLine[1:]))
 			if length == -1 {
-				fmt.Println("(nil)")
+				fmt.Println("（空值）")
 			} else {
 				// 💡 【核心修复】：准备一个容纳“内容 + \r\n”的钢铁容器
 				contentBuf := make([]byte, length+2)
@@ -93,7 +93,7 @@ func main() {
 				fmt.Printf("\"%s\"\n", string(contentBuf[:length]))
 			}
 		default:
-			fmt.Printf("Raw Reply: %s\n", string(replyLine))
+			fmt.Printf("原始响应：%s\n", string(replyLine))
 		}
 	}
 }

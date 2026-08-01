@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fmt.Println("Mini-Redis Server 启动中....")
+	fmt.Println("Mini-Redis 服务端启动中....")
 
 	// 根据业务注入 业务引擎和解析引擎
 	dbEngine := database.NewEngine(16)
