@@ -17,6 +17,11 @@ type Payload struct {
 type Parser struct {
 }
 
+const (
+	MaxArrayLength = 1024
+	MaxBulkLength  = 16 << 20 // 16 MiB
+)
+
 func NewRespParser() *Parser {
 	return &Parser{}
 }
