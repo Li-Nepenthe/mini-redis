@@ -120,6 +120,12 @@ func (p *Parser) ParseStream(reader io.Reader) <-chan *Payload {
 				// 发生错误后就不该继续了
 				return
 			}
+			if msgLength < 0 || msgLength > MaxArrayLength {
+				channel <- &Payload{
+					Err: fmt.Errorf("协议错误：数组长度越界：%d", msgLength),
+				}
+				return
+			}
 			// 创建对应长度的数组大小
 			msgBytes := make([][]byte, msgLength)
 			// 通过for循环拿到后续的三个参数
@@ -152,6 +158,12 @@ func (p *Parser) ParseStream(reader io.Reader) <-chan *Payload {
 						Err: fmt.Errorf("protocol error: expected array, got %q", param[1:]),
 					}
 					// 发生错误后就不应该继续了
+					return
+				}
+				if curLength < 0 || curLength > MaxBulkLength {
+					channel <- &Payload{
+						Err: fmt.Errorf("协议错误：块字符串长度越界：%d", curLength),
+					}
 					return
 				}
 				//读取当前长度加2 （\r\n）

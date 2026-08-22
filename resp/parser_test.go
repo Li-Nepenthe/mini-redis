@@ -2,6 +2,7 @@ package resp
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"reflect"
 	"testing"
@@ -75,11 +76,31 @@ func TestParser(parentT *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:  "parse bulk string containing CRLF",
+			name:  "解析包含 CRLF 的块字符串",
 			input: "*1\r\n$12\r\nhello\r\nworld\r\n",
 			want: [][]byte{
 				[]byte("hello\r\nworld"),
 			},
+		},
+		{
+			name:    "拒绝负数组长度",
+			input:   "*-1\r\n",
+			wantErr: true,
+		},
+		{
+			name:    "拒绝超大数组",
+			input:   fmt.Sprintf("*%d\r\n", MaxArrayLength+1),
+			wantErr: true,
+		},
+		{
+			name:    "拒绝负块字符串长度",
+			input:   "*1\r\n$-1\r\n",
+			wantErr: true,
+		},
+		{
+			name:    "拒绝超大块字符串",
+			input:   fmt.Sprintf("*1\r\n$%d\r\n", MaxBulkLength+1),
+			wantErr: true,
 		},
 	}
 
