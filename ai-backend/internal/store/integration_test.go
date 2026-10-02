@@ -158,3 +158,49 @@ func TestMySQLHTTPRegisterLoginJWTAndForbidden(t *testing.T) {
 		t.Fatal("readiness failed")
 	}
 }
+
+func TestMySQLConversationTimestampsStayUTCInNonUTCSession(t *testing.T) {
+	s := integrationStore(t)
+	s.DB.SetMaxOpenConns(1)
+	s.DB.SetMaxIdleConns(1)
+	ctx := context.Background()
+	// 只改本测试持有的独占连接，模拟常见+08:00服务器会话，不改global。
+	if _, err := s.DB.ExecContext(ctx, "SET SESSION time_zone='+08:00'"); err != nil {
+		t.Fatal(err)
+	}
+	user, err := s.CreateUser(ctx, domain.NewID()+"@example.test", "fixture-hash", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.CreateConversation(ctx, user.ID, "before")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.RenameConversation(ctx, item.ID, user.ID, "after")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if difference := time.Since(updated.UpdatedAt); difference < -time.Minute || difference > time.Minute {
+		t.Fatalf("UpdatedAt is not UTC: decoded=%s difference=%s", updated.UpdatedAt, difference)
+	}
+}
+
+func TestMySQLNewConnectionsUseUTC(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_DSN")
+	if dsn == "" {
+		t.Skip("requires owned real MySQL fixture")
+	}
+	ctx := context.Background()
+	s, err := Open(ctx, dsn+"&time_zone=%27%2B08%3A00%27", 2, 1, time.Minute, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	var zone string
+	if err := s.DB.QueryRowContext(ctx, "SELECT @@session.time_zone").Scan(&zone); err != nil {
+		t.Fatal(err)
+	}
+	if zone != "+00:00" {
+		t.Fatalf("driver connection timezone=%q", zone)
+	}
+}

@@ -32,3 +32,8 @@ M1尚需最终curl实际进程/检查复核；CI与PR须实际返回后补记录
 关闭Gin默认恢复输出后重新执行当前代码全量race+真实MySQL集成、vet、Staticcheck、build、gofmt，结果以任务work/validation/p2-m1-final-checks.json为最终依据。实际启动隐藏本机API子进程，已有curl.exe完成注册/登录JWT/错误token401/A看B403/CRUD/两页不重/ready，全部通过；测试账号为自有临时DB的新数据，无真实模型调用。日志含request_id，不存密码/JWT；验收后仅强制清理自有API进程，这不是优雅停机验收，M5再执行信号排空。
 
 CI配置在独立ai-backend job提供MySQL服务、模块工作目录与go.sum缓存，全量race运行真实Repository集成而非skip；尚未观察该配置的远端结果，需审查后提交并在准确HEAD上实际验收。M1独立审查和PR结果也须返回后记录，不能预先宣布通过。
+
+
+### M1独立审查修复：MySQL会话时区
+
+审查指出mysql-driver loc只解码、不设置服务端会话。已在自有测试库专用单连接设session+08:00实证：改名UpdatedAt被解码为UTC18:21，实际UTC10:21，偏移约8小时；失败日志保留p2-m1-timezone-before-fix.txt。未改global/系统/用户DB。修复为新连接显式time_zone=+00:00、改名updated_at使用Go UTC参数；专用session+08下更新仍正确，新连接即使DSN携带+08仍按UTC建立。补两项真实MySQL回归，当前全量race/真实DB、vet、Staticcheck、build、格式通过；最终证据仍为p2-m1-final-checks.json及对应日志，替代修复前的同名final记录。原审查HEAD a19bd92的其他M1功能/范围与离线race均通过；修复commit需再次审查并观察准确HEAD CI。

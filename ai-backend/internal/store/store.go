@@ -27,6 +27,11 @@ func Open(ctx context.Context, dsn string, maxOpen, maxIdle int, lifetime time.D
 		return nil, errors.New("invalid DATABASE_DSN")
 	}
 	cfg.ParseTime, cfg.Loc, cfg.MultiStatements = true, time.UTC, false
+	if cfg.Params == nil {
+		cfg.Params = make(map[string]string)
+	}
+	// loc仅控制驱动解码，不会设置MySQL会话；新连接必须同时使用UTC。
+	cfg.Params["time_zone"] = "'+00:00'"
 	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
 	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
@@ -172,7 +177,7 @@ func (s *Store) RenameConversation(ctx context.Context, id, owner, title string)
 	if _, err := s.Conversation(ctx, id, owner); err != nil {
 		return domain.Conversation{}, err
 	}
-	result, err := s.DB.ExecContext(ctx, "UPDATE conversations SET title=?,updated_at=CURRENT_TIMESTAMP(6) WHERE id=? AND user_id=?", title, id, owner)
+	result, err := s.DB.ExecContext(ctx, "UPDATE conversations SET title=?,updated_at=? WHERE id=? AND user_id=?", title, time.Now().UTC(), id, owner)
 	if err != nil {
 		return domain.Conversation{}, err
 	}

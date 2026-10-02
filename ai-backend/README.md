@@ -56,6 +56,8 @@ Windows 使用 curl.exe，PowerShell 环境赋值用 $env:NAME='value'。登入�
 
 实际至少三条关键SQL与无索引/加索引rows对照见 [EXPLAIN材料](docs/explain.md)。MySQL rows 为优化器估计，不伪装成扫描计时。
 
+驱动loc只影响解码，连接额外设置MySQL time_zone=+00:00；写入时间用Go UTC，不与非UTC会话CURRENT_TIMESTAMP混用。真实session+08回归已通过。
+
 默认每进程 MaxOpenConns=20/MaxIdleConns=10、5分钟最大生命周期、1分钟最大闲置；API+Worker在本机max_connections=100下保留管理/测试空间。20是可调初值，不等于CPU核数，也不靠加连接修复慢SQL；看DBStats等待及压测再调。bcrypt先计算再开启注册事务，减少占锁时间。账号写成功但额度约束失败会回滚账号，真实集成测试验证此路径。
 
 ## 检查与学习
