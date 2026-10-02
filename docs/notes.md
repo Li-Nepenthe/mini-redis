@@ -520,3 +520,14 @@ S1–S5 工程验收已完成；S6 的本机/Docker/官方客户端与审查 PR 
 内部标记最终采用与 LPUSH 同为5字节的 _LNEW。独立复审发现较长私有名会使合法32MiB帧落盘超预算，已补精确最大帧通过回归；未扩大 Parser 限额。全量 go test -race ./... -count=1 -timeout=180s 通过（aof5.220s、database15.239s，其余包亦通过），随后 go vet、Staticcheck v0.8.1、go build 通过，gofmt与diff --check为空。Parser代码未改，不无理由重复十分钟Fuzz。
 
 已重新 docker build 修复镜像，并用官方 redis-cli +同一Linux guest等待验证：到期前追加List重启不复活；String续期仍保留（TTL15→13）；旧String过期后新List无旧值/TTL；SIGKILL137/OOMfalse重开AOF通过；SIGTERM退出0。独立只读审查额外运行200个种子×150步历史重放比较。原始证据在任务 work/validation/p1-review-fix-race-final.txt、p1-review-fix-docker-{build-final,events,result}；仅清理自有容器/卷。修复提交及main CI须后续实证，不能引用前一HEAD的绿灯作为本提交通过。
+
+
+## 2026-10-02 · P1 合并/main 实证与 P2 M1
+
+独立复审对 fbbce11 明确通过：两个历史TTL故障、重建/类型转换/删除边界、旧普通格式、精确32MiB Parser→真实Store→重开和200种子×150步历史一致。修复HEAD的CI36991097480/job110787252186全部success后，把草稿转ready并用expected_head_sha精确约束合并PR #1，GitHub返回merged=true、sha84d3c8cf7c853ff68addae3b5056c2bf80308a8c。不是默认开启自动合并或跳过检查。
+
+main push的CI36991251698/job110787739322全部success（格式/full race/vet/Staticcheck/build）；已读远端main README并重新打开带本次提交验证参数的仓库首页，页面显示项目文档。普通网页缓存一度仍显示旧目录，本次未据旧缓存推断本地未推进；Actions/PR/Git远端提交为证据。原目录main已ff-only到该SHA，无未提交变更，未回退/覆盖他人工作。
+
+S6 description/topics仍空。GitHub连接工具没有元信息写接口；computer-use SKILL要求先读核心guidance再控制UI，但当前委派环境取不到这些资源且没有node_repl，故该窄项保留待补，已向父会话报出；没有读取凭据绕过连接权限。本人学习问答仍不代签，P1工程就绪不等于所有封版条件已打勾。
+
+已从main在任务work/mini-redis-p2建独立分支codex/ai-backend-p2-20261002，M1使用Gin/手写SQL/MySQL/bcrypt/AccessToken/owner鉴权，真实MySQL8.4.11的事务回滚、密码散列、分页不重、跨用户403、全量race和curl实际进程验收通过；索引三条实际EXPLAIN与对照rows有数据。细节/WHY/命令/剩余项在ai-backend/README.md、docs/notes.md、docs/explain.md及根验收矩阵。P1核心Go文件未因P2修改。
