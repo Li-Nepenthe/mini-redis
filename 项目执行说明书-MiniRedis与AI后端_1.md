@@ -345,7 +345,7 @@ func FuzzParseStream(f *testing.F) {
 
 ## S4 · AOF（第 5 周）
 
-**10/02 最终验收备注**：实际主程序经 Windows 强制终止（不运行正常关闭）后恢复全部 1000 个已确认 SET；实际 AOF 文件最后一帧截去一半后重启，仅最后一个 key 缺失，其余 999 个保留。真实 Ctrl+C/重启的 String/List、绝对 TTL 与 full race 也通过。这里验收的是本机 Windows 崩溃路径；Linux kill -9 字面命令未执行，详见 docs/notes.md。
+**10/02 最终验收备注**：实际主程序经 Windows 强制终止（不运行正常关闭）后恢复全部 1000 个已确认 SET；实际 AOF 文件最后一帧截去一半后重启，仅最后一个 key 缺失，其余 999 个保留。真实 Ctrl+C/重启的 String/List、绝对 TTL 与 full race 也通过。本机 Windows 强制终止与 Docker 内原生 Linux SIGKILL 路径均已通过，详见 docs/notes.md。
 
 **目标**：崩溃后数据在明确定义的窗口内不丢失。
 
@@ -360,7 +360,7 @@ func FuzzParseStream(f *testing.F) {
 
 **完成特征**
 
-- [x] `SET k v` → `kill -9` → 重启 → `GET k` 返回 v（10/02 使用 Windows 强制终止实际服务进程，不经过 Close；Linux 字面命令未执行）
+- [x] `SET k v` → `kill -9` → 重启 → `GET k` 返回 v（10/02 Windows 强制终止及 Docker 内 Linux SIGKILL 实测，不经过 Close）
 - [x] 连续写 1000 条 → kill → 重启 → 数据条数正确（实际主程序 1000/1000 已确认写入恢复）
 - [x] 手工截断 AOF 尾部半条命令 → 重启 → 服务正常启动，仅丢最后一条（实际文件截断的自动验收：999 保留、最后一条 nil）
 - [x] 带 TTL 的 key 重启后过期语义与 README 描述一致（10/02 自动重启/过期测试通过）
@@ -441,7 +441,7 @@ func FuzzParseStream(f *testing.F) {
 **完成特征**
 
 - [x] `docker build` + `docker run` 能起服务，`redis-cli` 能连（10/02 Docker 29.7.2、官方 redis-cli 8.10.2 实测；非 root/命名卷/本机端口通过）
-- [ ] GitHub Actions 徽章为绿
+- [ ] GitHub Actions 徽章为绿（草稿 PR #1 CI 已全绿；main 默认徽章需合并后再验）
 - [x] `Ctrl+C` 后进程 3 秒内干净退出，AOF 已 flush（10/02 真实 Windows CTRL_C_EVENT，约 1.6–3.0ms、退出码 0；AOF 重开重放通过，极端 I/O 未测）
 - [ ] GitHub 仓库首页显示的是项目文档
 - [x] 全仓库搜索 emoji 结果为零（10/02 本地字符清理，最终复核见 docs/notes.md）
@@ -839,7 +839,7 @@ type Provider interface {
 - [x] S3 TTL　　　　　　目标 09/18　实际 2026-10-02（工程验收完成；真实 TTL/10 万 key 工作集/信号/全量 race 通过，学习问答待口述）
 - [x] S4 AOF　　　　　　目标 09/25　实际 2026-10-02（本机 Windows 工程验收完成；真实强制终止/半尾文件/TTL 恢复及全量 race 通过，学习问答待口述）
 - [x] S5 性能数据　　　　目标 09/29　实际 2026-10-02（工程数据/分析完成，学习问答未代答）
-- [ ] S6 工程化与封版　　目标 10/02　实际 ______（10/02 本地/Docker/官方客户端/停机/全量 race 通过；草稿 PR CI 待执行，main 首页/徽章与学习口述待补）
+- [ ] S6 工程化与封版　　目标 10/02　实际 ______（10/02 本地/Docker/官方客户端/停机/全量 race 通过；草稿 PR #1 CI 已通过，main 首页/默认徽章与学习口述待补）
 
 ## P2 · AI 应用后端
 

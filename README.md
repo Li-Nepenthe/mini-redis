@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-P1 的 S1–S5 已完成当前本机工程验收。十条命令、TTL、AOF、请求排空以及本地 Docker/CI 配置已实现；内存修复后的全量 race、普通测试、vet、build、Staticcheck、格式检查与 Linux 交叉构建通过。Windows 实际服务进程的 Ctrl+C、强制终止恢复、真实 AOF 尾部截断及 10 万 key 过期后的工作集回落均通过。官方 redis-cli 8.10.2 的同连接 20 条命令与 Docker 构建/运行、Linux 强制终止恢复及正常停机均通过；S6 仍待本次草稿 PR 的远端 CI、main 首页与本人学习口述，不能宣称封版。说明书 P2 AI 应用后端不在本轮范围。
+P1 的 S1–S5 已完成当前本机工程验收。十条命令、TTL、AOF、请求排空以及本地 Docker/CI 配置已实现；内存修复后的全量 race、普通测试、vet、build、Staticcheck、格式检查与 Linux 交叉构建通过。Windows 实际服务进程的 Ctrl+C、强制终止恢复、真实 AOF 尾部截断及 10 万 key 过期后的工作集回落均通过。官方 redis-cli 8.10.2 的同连接 20 条命令与 Docker 构建/运行、Linux 强制终止恢复及正常停机均通过；本次草稿 PR 的远端 CI 已通过；S6 仍待 main 首页/默认分支徽章与本人学习口述，不能宣称封版。说明书 P2 AI 应用后端不在本轮范围。
 
 从 [中文学习指南](docs/learning-guide.md) 开始：运行 → 追踪一条请求 → 模块 → 测试/调试 → 练习与自查。阶段和实际命令/结果见 [开发记录](docs/notes.md)，进度表见执行说明书 §6。
 
@@ -105,7 +105,7 @@ docker build -t mini-redis:local .
 docker run --rm --name mini-redis-local -p 127.0.0.1:6379:6379 -v mini-redis-data:/data mini-redis:local
 ```
 
-多阶段构建将 Go 1.27.1 编译的 Linux 可执行文件放入 scratch 镜像，以非 root 用户运行；命名卷保存 AOF。官方客户端可运行 `docker run --rm --network container:mini-redis-local redis:alpine redis-cli -h 127.0.0.1 -p 6379 PING`。停止用 `docker stop --time 3 mini-redis-local`。本轮启动已有 Docker Desktop 29.7.2，Docker 构建/运行与官方 redis-cli 8.10.2 验收通过。容器内 SIGKILL 后命名卷恢复 String/List、绝对 TTL 未续命；SIGTERM 正常停止约 0.294s、退出码 0，AOF 重开成功。临时验收容器和数据卷已清理。GitHub Actions 已配置 race/vet/Staticcheck/build/格式，本次草稿 PR 的远端结果待执行；配置与本地通过不能代替远端结论。
+多阶段构建将 Go 1.27.1 编译的 Linux 可执行文件放入 scratch 镜像，以非 root 用户运行；命名卷保存 AOF。官方客户端可运行 `docker run --rm --network container:mini-redis-local redis:alpine redis-cli -h 127.0.0.1 -p 6379 PING`。停止用 `docker stop --time 3 mini-redis-local`。本轮启动已有 Docker Desktop 29.7.2，Docker 构建/运行与官方 redis-cli 8.10.2 验收通过。容器内 SIGKILL 后命名卷恢复 String/List、绝对 TTL 未续命；SIGTERM 正常停止约 0.294s、退出码 0，AOF 重开成功。临时验收容器和数据卷已清理。GitHub Actions 的 race/vet/Staticcheck/build/格式已在 [草稿 PR #1](https://github.com/Li-Nepenthe/mini-redis/pull/1) 上通过，实测来源见 [CI 运行](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36974612279)。默认 main 尚未合并，首页/默认分支徽章仍待后续授权。
 
 ## 未来方向
 

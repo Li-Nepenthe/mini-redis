@@ -489,3 +489,14 @@ python <task>/work/docker_acceptance.py
 S1–S5 当前本机工程验收完成；S6 的 Docker/客户端与真实停机已闭合。接下来提交并推送新审查分支、创建草稿 PR，观察该提交的 race/vet/Staticcheck/build/格式检查；远端结果需实际返回后记录，不能预先勾选。main 首页/默认分支徽章仍待获准合并后验证，本人口述未代答，未宣告封版或推进 P2。
 
 匿名邮箱格式依据：[GitHub 邮箱说明](https://docs.github.com/en/account-and-profile/reference/email-addresses-reference)。构建、协议与计时结论以本段本机实测为证据。
+
+
+## 2026-10-02 · 草稿 PR 与远端 CI 通过
+
+按已获授权把本任务 48 个差异路径提交到新审查分支 codex/mini-redis-p1-acceptance-20261002，未包含 .idea、数据、任务日志/工具或无关文件。Windows 大小写改名在索引中显式记录为旧 Engine.go 移除、新 engine.go 加入；暂存 diff --check 首次发现性能展示 CPU 行尾填充空格，文档清除该空格后通过，原始 benchmark 日志未变。gofmt、46 文件哈希、LF、图标字符与 Markdown 本地链接复核通过。提交身份仅在 commit 参数中设置为已连接账户的匿名邮箱，不改全局配置。
+
+实现提交为 3d95ea3523566ee3fb60198bc416c5773b8dc573，main/base 仍为 6daf72512bd25a1a670d0f8957a1cc66cfecf992。执行 git push --set-upstream origin HEAD:refs/heads/codex/mini-redis-p1-acceptance-20261002 成功，未强推；创建一次 [草稿 PR #1](https://github.com/Li-Nepenthe/mini-redis/pull/1)，base main、draft true、merged false，并核对 head SHA。
+
+[CI 运行 36974612279](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36974612279) 对该实现提交成功；Ubuntu runner 的 checkout/setup-go、gofmt、完整 race、vet、Staticcheck v0.8.1、build 与收尾步骤全部 success，不是根据空 status 列表推断。来源记录为任务 work/validation/ci-run-1-jobs.json 与 ci-run-1-complete.json，推送/提交日志为 review-push.txt 与 review-commit-final.txt。本段为已完成运行的记录，同一审查分支的后续文档提交不改变代码；审查时仍以 PR 当前 HEAD 的 checks 为准。
+
+S1–S5 工程验收已完成；S6 的本机/Docker/官方客户端与审查 PR CI 均已通过。仍未合并 main，所以默认首页/徽章保留未勾选；本人七项口述尚未验收，不替其作答，未按日期宣布封版。没有部署、启用自动合并、变更安全配置或推进 P2。临时验收容器/卷已清理，Docker Desktop 与必要镜像保留。

@@ -204,7 +204,7 @@ docker build -t mini-redis:local .
 docker run --rm --name mini-redis-local -p 127.0.0.1:6379:6379 -v mini-redis-data:/data mini-redis:local
 ```
 
-随后从另一个窗口用 redis-cli 连接，停止可用 `docker stop --time 3 mini-redis-local`。本轮已有 Docker Desktop 启动成功，构建和官方客户端验收通过。客户端可用 `docker run --rm --network container:mini-redis-local redis:alpine redis-cli -h 127.0.0.1 -p 6379 PING`；无需为此再装系统客户端。20 条混合命令期间四次采样 TCP socket inode 与本地端口保持不变，覆盖小写 SET、多值 LPUSH/LRANGE、WRONGTYPE、TTL 和多 key。还验证了含零字节/CRLF/中文的二进制值、容器内 5 秒 TTL、Linux SIGKILL 后命名卷重放及 SIGTERM 约 0.294s 正常退出。专属临时资源已清理，Docker Desktop 与镜像保留。CI 配置包含 race、vet、固定版本 Staticcheck、build 和格式检查；本次草稿 PR 的远端结果待执行，main 徽章尚不能据本机通过勾选。
+随后从另一个窗口用 redis-cli 连接，停止可用 `docker stop --time 3 mini-redis-local`。本轮已有 Docker Desktop 启动成功，构建和官方客户端验收通过。客户端可用 `docker run --rm --network container:mini-redis-local redis:alpine redis-cli -h 127.0.0.1 -p 6379 PING`；无需为此再装系统客户端。20 条混合命令期间四次采样 TCP socket inode 与本地端口保持不变，覆盖小写 SET、多值 LPUSH/LRANGE、WRONGTYPE、TTL 和多 key。还验证了含零字节/CRLF/中文的二进制值、容器内 5 秒 TTL、Linux SIGKILL 后命名卷重放及 SIGTERM 约 0.294s 正常退出。专属临时资源已清理，Docker Desktop 与镜像保留。本次 [草稿 PR #1](https://github.com/Li-Nepenthe/mini-redis/pull/1) 的远端 race、vet、固定版本 Staticcheck、build 和格式检查已经全部通过；来源为 [CI 运行](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36974612279)。这是审查分支的真实结果，main 仍未合并，不能把默认分支徽章也勾为完成。
 
 ## 五、按阶段练习与自查
 
@@ -235,6 +235,6 @@ docker run --rm --name mini-redis-local -p 127.0.0.1:6379:6379 -v mini-redis-dat
 
 已实现：十条命令、16 分片 String/List、TTL 双策略与大批过期限频回收、always-fsync AOF/重放/尾部恢复、context 停机与请求排空。已验证：修复后全量 race、普通引擎/协议/真实 TCP 测试、10 万 key 清理及实际进程工作集回落、真实 Windows Ctrl+C、1000 次已确认写入后强制终止恢复及实际文件半尾截断、存储故障、两轮十分钟 Fuzz、S5 九格及 CPU profile、最终 vet/build/Staticcheck/格式与 Linux 交叉构建。Windows TerminateProcess 覆盖不经过正常关闭的崩溃路径；本轮 Docker 中也通过原生 Linux SIGKILL 验证命名卷恢复。
 
-官方 redis-cli 与 Docker build/run 已通过。未验证：本次草稿 PR 的远端 CI、main 首页/徽章、用户脱稿口述。未用手按键盘代替自动信号测试；极端磁盘阻塞与大量过期时的请求尾延迟也没有测量。未实现：范围外 Redis 功能与 P2；AOF Rewrite 和全局内存/连接配额也没有。没有把“已有 CI/Docker 文件”当作“CI/Docker 通过”。
+官方 redis-cli、Docker build/run 和草稿 PR 的远端 CI 已通过。未验证：main 首页/默认分支徽章、用户脱稿口述。未用手按键盘代替自动信号测试；极端磁盘阻塞与大量过期时的请求尾延迟也没有测量。未实现：范围外 Redis 功能与 P2；AOF Rewrite 和全局内存/连接配额也没有。没有把“已有 CI/Docker 文件”当作“CI/Docker 通过”。
 
-S1–S5 已完成当前本机工程验收，S2 官方客户端已补齐；S6 本地及 Docker 工程验收通过，远端 CI/main 首页与学习验收尚未闭合。实际日期不能替代说明书的全阶段完成特征；当前不能宣布封版。下一步应补齐上述环境/权限相关验收并由使用者做学习自查，已有结果的命令与限制以 [notes.md](notes.md) 为准。
+S1–S5 已完成当前工程验收，S2 官方客户端已补齐；S6 本地、Docker 与审查 PR CI 验收通过，main 首页/默认分支徽章与本人学习验收尚未闭合。实际日期不能替代说明书的全阶段完成特征；当前不能宣布封版。下一步应补齐上述环境/权限相关验收并由使用者做学习自查，已有结果的命令与限制以 [notes.md](notes.md) 为准。
