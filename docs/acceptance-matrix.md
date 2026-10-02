@@ -18,8 +18,8 @@
 | S4 历史 TTL 续期/过期前 LPUSH/过期后重建一致 | persistence_test.go、aof/store_test.go | 固定时钟/真实 Store、精确32MiB；full race；Linux SIGKILL恢复 | 通过 |
 | S5 1/16/64 shard × 9:1/纯写/80%热点、环境、profile、README 结论 | benchmark_test.go；docs/performance.md | 9 组各 3 次，CPU pprof；原始日志路径记录 | 通过 |
 | S6 信号关 listener→排空→AOF，3 秒；Docker 多阶段非 root | cmd/server；Dockerfile | Windows Ctrl+C 1.6–3.0ms；Docker SIGTERM 0.294s；官方客户端 | 通过 |
-| S6 race/Staticcheck/build CI、默认徽章、仓库首页 | .github/workflows/ci.yml；README.md | PR #1 前两次 CI 通过；修复后及 main 合并后须再验 | 待验 |
-| S6 改 module/文件名、清空文件/死码/emoji、LF、gitignore、README/问答、元信息 | 全仓；docs/learning-guide.md、notes.md | 历史本地检查通过；最终修复提交再查格式/范围 | 待验 |
+| S6 race/Staticcheck/build CI、默认徽章、仓库首页 | .github/workflows/ci.yml；README.md | fbbce11 CI36991097480、main84d3c8c CI36991251698全success；首页实证 | 通过 |
+| S6 改 module/文件名、清空文件/死码/emoji、LF、gitignore、README/问答、元信息 | 全仓；docs/learning-guide.md、notes.md | 清理/格式/范围已通过；description/topics缺写入口仍空 | 待验 |
 | S1–S6 各阶段“必须能回答”、S6 七点脱稿、§3.5 全特征封版 | docs/learning-guide.md | 需本人学习口述，不代答、不伪造封版 | 本人待答 |
 
 ## P2 M1–M3：必须完成的最小版本
@@ -28,12 +28,12 @@
 
 | 编号 | 要求（含完成特征/材料） | 交付/证据 | 状态 |
 |---|---|---|---|
-| M1.1 | Gin/net/http 项目结构、配置、.env.example、手写 SQL/migrations；说明书全部表/索引 | ai-backend/；schema 文档 | 待实现 |
-| M1.2 | 注册登录、bcrypt 密码、JWT 仅 AccessToken；curl 登录，错 token 401 | API/鉴权测试；真实 MySQL 密码检查 | 待实现 |
-| M1.3 | 会话 CRUD/分页；第二页不重；资源 owner；A 访问 B 会话 403 | API/Repository 集成测试 | 待实现 |
-| M1.4 | 统一响应/错误码、RequestID/Recover；table-driven unit+Repository DB integration | 中间件/错误测试，full race | 待实现 |
-| M1.5 | 每个索引 WHY、至少 3 条关键 SQL EXPLAIN、索引前后 rows；关键查询不 ALL | schema/explain 实际数据 | 待实现 |
-| M1.6 | 连接池参数与理由、一例事务边界/失败路径 | README/SQL 事务回滚测试 | 待实现 |
+| M1.1 | Gin/net/http 项目结构、配置、.env.example、手写 SQL/migrations；说明书全部表/索引 | ai-backend/；schema 文档 | 通过 |
+| M1.2 | 注册登录、bcrypt 密码、JWT 仅 AccessToken；curl 登录，错 token 401 | API/鉴权测试；真实 MySQL 密码检查 | 通过 |
+| M1.3 | 会话 CRUD/分页；第二页不重；资源 owner；A 访问 B 会话 403 | API/Repository 集成测试 | 通过 |
+| M1.4 | 统一响应/错误码、RequestID/Recover；table-driven unit+Repository DB integration | 中间件/错误测试，full race | 通过 |
+| M1.5 | 每个索引 WHY、至少 3 条关键 SQL EXPLAIN、索引前后 rows；关键查询不 ALL | schema/explain 实际数据 | 通过 |
+| M1.6 | 连接池参数与理由、一例事务边界/失败路径 | README/SQL 事务回滚测试 | 通过 |
 | M2.1 | Mock 先行、一个 OpenAI-compatible Provider；Generate/Stream 统一接口 | Provider 单元/本地 HTTP 合约测试 | 待实现 |
 | M2.2 | SSE Content-Type/Flush/心跳/事件 ID；浏览器逐字；断连取消上游 | 最小 HTML+JS；流与断连实测 | 待实现 |
 | M2.3 | InvalidRequest/RateLimited/Timeout/ProviderUnavailable/StreamInterrupted | 400/429/5xx/中断测试 | 待实现 |

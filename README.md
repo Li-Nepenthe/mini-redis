@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-P1 的 S1–S5 已完成当前本机工程验收。十条命令、TTL、AOF、请求排空以及本地 Docker/CI 配置已实现；内存修复后的全量 race、普通测试、vet、build、Staticcheck、格式检查与 Linux 交叉构建通过。Windows 实际服务进程的 Ctrl+C、强制终止恢复、真实 AOF 尾部截断及 10 万 key 过期后的工作集回落均通过。官方 redis-cli 8.10.2 的同连接 20 条命令与 Docker 构建/运行、Linux 强制终止恢复及正常停机均通过；本次草稿 PR 的远端 CI 已通过；S6 仍待 main 首页/默认分支徽章与本人学习口述，不能宣称封版。2026-10-02 用户追加授权复审合并 P1 并完成 P2；逐项范围与状态见 [验收矩阵](docs/acceptance-matrix.md)，P2 尚未实施，学习口述保持待答。
+P1 的 S1–S5 工程验收完成；S6 的代码/Docker/停机与复审修复已通过，PR #1 已合并为 main@84d3c8c，合并后的 CI 全绿，默认首页已显示此项目文档。仍待仓库 description/topics 的可用写入口与本人七项口述，不能宣称个人学习封版。说明书 P2 在 [ai-backend/](ai-backend/README.md) 独立 Go module 推进，M1 业务地基已通过本机工程验收，M2–M5 待实施；逐项状态见 [验收矩阵](docs/acceptance-matrix.md)。
 
 从 [中文学习指南](docs/learning-guide.md) 开始：运行 → 追踪一条请求 → 模块 → 测试/调试 → 练习与自查。阶段和实际命令/结果见 [开发记录](docs/notes.md)，进度表见执行说明书 §6。
 
@@ -107,7 +107,7 @@ docker build -t mini-redis:local .
 docker run --rm --name mini-redis-local -p 127.0.0.1:6379:6379 -v mini-redis-data:/data mini-redis:local
 ```
 
-多阶段构建将 Go 1.27.1 编译的 Linux 可执行文件放入 scratch 镜像，以非 root 用户运行；命名卷保存 AOF。官方客户端可运行 `docker run --rm --network container:mini-redis-local redis:alpine redis-cli -h 127.0.0.1 -p 6379 PING`。停止用 `docker stop --time 3 mini-redis-local`。本轮启动已有 Docker Desktop 29.7.2，Docker 构建/运行与官方 redis-cli 8.10.2 验收通过。容器内 SIGKILL 后命名卷恢复 String/List、绝对 TTL 未续命；SIGTERM 正常停止约 0.294s、退出码 0，AOF 重开成功。临时验收容器和数据卷已清理。GitHub Actions 的 race/vet/Staticcheck/build/格式已在 [草稿 PR #1](https://github.com/Li-Nepenthe/mini-redis/pull/1) 上通过，实测来源见 [CI 运行](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36974612279)。默认 main 的首页/徽章须在本次已获授权的复审合并后实测。
+多阶段构建将 Go 1.27.1 编译的 Linux 可执行文件放入 scratch 镜像，以非 root 用户运行；命名卷保存 AOF。官方客户端可运行 `docker run --rm --network container:mini-redis-local redis:alpine redis-cli -h 127.0.0.1 -p 6379 PING`。停止用 `docker stop --time 3 mini-redis-local`。本轮启动已有 Docker Desktop 29.7.2，Docker 构建/运行与官方 redis-cli 8.10.2 验收通过。容器内 SIGKILL 后命名卷恢复 String/List、绝对 TTL 未续命；SIGTERM 正常停止约 0.294s、退出码 0，AOF 重开成功。临时验收容器和数据卷已清理。GitHub Actions 的 race/vet/Staticcheck/build/格式已在 [草稿 PR #1](https://github.com/Li-Nepenthe/mini-redis/pull/1) 上通过，实测来源见 [CI 运行](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36974612279)。PR #1 已合并，main@84d3c8c 的 [CI](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36991251698) 全步骤通过；默认仓库页面已实测显示项目 README。仓库元信息和本人口述仍待完成。
 
 ## 未来方向
 
