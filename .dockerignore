@@ -1,0 +1,13 @@
+.git
+.idea
+.claude
+.agents
+.codex
+data
+*.aof
+*.exe
+*.test
+*.pprof
+*-audit.txt
+audit.sh
+ROADMAP.md

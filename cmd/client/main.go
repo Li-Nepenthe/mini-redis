@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"io" // 🫵 记得导入 io 包
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -68,7 +68,7 @@ func main() {
 			continue
 		}
 
-		// 根据 RESP 协议的第一个字符，进行外科手术式精准打印！
+		// 该学习客户端只显示简单回复，不作为完整数组/命令兼容性验收工具。
 		switch replyLine[0] {
 		case '+': // 状态回复
 			fmt.Printf("状态：%s\n", string(replyLine[1:]))
@@ -79,17 +79,16 @@ func main() {
 			if length == -1 {
 				fmt.Println("（空值）")
 			} else {
-				// 💡 【核心修复】：准备一个容纳“内容 + \r\n”的钢铁容器
+				// bulk 以字节长度分帧，内容中的换行不能作为结束标记。
 				contentBuf := make([]byte, length+2)
 
-				// 🫵 【钢铁防线】：丢掉软弱的 Read，改用 io.ReadFull 强制灌满容器，一片残余都不准留下！
+				// TCP 一次 Read 不保证读满，ReadFull 才能取完这一帧。
 				_, err = io.ReadFull(netReader, contentBuf)
 				if err != nil {
 					fmt.Println("网络流读取残缺，强制中断:", err)
 					break
 				}
 
-				// 剥离掉最后的 \r\n，打印纯净的肉数据
 				fmt.Printf("\"%s\"\n", string(contentBuf[:length]))
 			}
 		default:

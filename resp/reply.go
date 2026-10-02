@@ -1,44 +1,76 @@
 package resp
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
-// 解析exec传来的数据 按照标准格式返回、
+type publicError interface {
+	RESPError() (code, message string)
+}
 
 func EncodeReply(result any, execErr error) ([]byte, error) {
-	// 首先判断错误是否为空
 	if execErr != nil {
-		//如果错误不为空 则只处理错误 忽略result
-		return []byte("-ERR " + execErr.Error() + "\r\n"), nil
-	}
-
-	// 错误为空 处理result 由于result返回类型固定 采用Switch Type 匹配
-	// switch result.(type)在运行时检查result内部的实际类型 然后选择对应的case
-	switch value := result.(type) { // 可以拿到具体的value 然后在case里面使用
-	// value只有进入对应的case才有类型 相当于每一层case都做了一次类型断言
-	case nil: // 表示命令执行成功 但是没有数据可返回 如Get或者LPop不存在的key
-		return []byte("$-1\r\n"), nil
-	case []byte: //返回数据 但是要追加长度
-		// 下面的对于value来说 会产生 []byte -> string -> byte的转换
-		// return []byte("$" + strconv.Itoa(len(value)) + "\r\n" + string(value) + "\r\n"), nil
-		// 推荐使用append追加
-		header := "$" + strconv.Itoa(len(value)) + "\r\n"
-		reply := make([]byte, 0, len(header)+len(value)+2)
-		reply = append(reply, header...) // ...表示把header字符串按照每个字节展开 逐个相加
-		reply = append(reply, value...)  // 把value中的每个byte逐个追加到reply中
-		reply = append(reply, '\r', '\n')
-		return reply, nil
-	case bool: // value 的类型是 bool 只有SET会返回 且一般情况是为true
-		if !value {
-			return nil, fmt.Errorf("出现非预期的布尔结果")
+		var public publicError
+		if errors.As(execErr, &public) {
+			code, message := public.RESPError()
+			if validErrorCode(code) {
+				// 错误只能占一行，即使公开业务错误也不能带 CRLF 注入另一条 RESP 回复。
+				message = strings.NewReplacer("\r", " ", "\n", " ").Replace(message)
+				return []byte("-" + code + " " + message + "\r\n"), nil
+			}
 		}
-		return []byte("+OK\r\n"), nil
-	case int: // LPUSH 返回的是 int 表示
-		return []byte(":" + strconv.Itoa(value) + "\r\n"), nil
-	default:
-		// 不支持的类型
-		return nil, fmt.Errorf("不支持的返回类型：%T", value)
+		return []byte("-ERR internal server error\r\n"), nil
 	}
+	switch value := result.(type) {
+	case nil:
+		return []byte("$-1\r\n"), nil
+	case []byte:
+		return appendBulk(nil, value), nil
+	case [][]byte:
+		reply := []byte("*" + strconv.Itoa(len(value)) + "\r\n")
+		for _, element := range value {
+			reply = appendBulk(reply, element)
+		}
+		return reply, nil
+	case interface{ RESPStatus() string }:
+		status := value.RESPStatus()
+		if strings.ContainsAny(status, "\r\n") {
+			return nil, errors.New("invalid status reply")
+		}
+		return []byte("+" + status + "\r\n"), nil
+	case bool:
+		if value {
+			return []byte("+OK\r\n"), nil
+		}
+		return nil, errors.New("unexpected false result")
+	case int:
+		return []byte(":" + strconv.Itoa(value) + "\r\n"), nil
+	case int64:
+		return []byte(":" + strconv.FormatInt(value, 10) + "\r\n"), nil
+	default:
+		return nil, fmt.Errorf("unsupported reply type: %T", value)
+	}
+}
+
+func appendBulk(reply, value []byte) []byte {
+	reply = append(reply, '$')
+	reply = strconv.AppendInt(reply, int64(len(value)), 10)
+	reply = append(reply, '\r', '\n')
+	reply = append(reply, value...)
+	return append(reply, '\r', '\n')
+}
+
+func validErrorCode(code string) bool {
+	if code == "" {
+		return false
+	}
+	for _, ch := range code {
+		if ch < 'A' || ch > 'Z' {
+			return false
+		}
+	}
+	return true
 }

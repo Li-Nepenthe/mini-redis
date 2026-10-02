@@ -56,7 +56,7 @@ func TestEncodeReply(parentT *testing.T) {
 		{
 			name:    "错误非空",
 			execErr: errors.New("错误非空"),
-			want:    []byte("-ERR 错误非空\r\n"),
+			want:    []byte("-ERR internal server error\r\n"),
 		},
 		{
 			name:    "拒绝false  不支持的类型",
