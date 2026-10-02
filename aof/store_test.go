@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Li-Nepenthe/mini-redis/database"
+	"github.com/Li-Nepenthe/mini-redis/resp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,43 @@ func TestReplayStringListDeleteAndTTL(t *testing.T) {
 	time.Sleep(time.Second)
 	restored, _ = openEngine(t, path)
 	execute(t, restored, int64(-2), "TTL", "list")
+}
+
+func TestExpiredListWithLaterPushDoesNotResurrectOnReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "appendonly.aof")
+	engine, store := openEngine(t, path)
+	execute(t, engine, 1, "LPUSH", "list", "a")
+	execute(t, engine, 1, "EXPIRE", "list", "1")
+	execute(t, engine, 2, "LPUSH", "list", "b")
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	execute(t, engine, int64(-2), "TTL", "list")
+	restored, _ := openEngine(t, path)
+	execute(t, restored, int64(-2), "TTL", "list")
+	execute(t, restored, [][]byte{}, "LRANGE", "list", "0", "-1")
+}
+
+func TestMaximumSizedLPUSHFitsPersistedCreationRecord(t *testing.T) {
+	request := [][]byte{[]byte("LPUSH"), []byte("max"),
+		make([]byte, resp.MaxBulkLength), make([]byte, resp.MaxBulkLength-128)}
+	initial, err := encodeRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request[3] = append(request[3], make([]byte, resp.MaxRequestLength-len(initial))...)
+	wire, err := encodeRequest(request)
+	if err != nil || len(wire) != resp.MaxRequestLength {
+		t.Fatalf("boundary fixture length=%d err=%v", len(wire), err)
+	}
+	engine := database.NewEngine(16)
+	store := &Store{file: &faultFile{}}
+	engine.AttachLog(store)
+	result, err := engine.Exec(request)
+	if err != nil || result != 2 || store.size != resp.MaxRequestLength {
+		t.Fatalf("maximum LPUSH result=%v err=%v persisted=%d", result, err, store.size)
+	}
 }
 
 func TestRecoverOnlyIncompleteTailWithActualOffsets(t *testing.T) {

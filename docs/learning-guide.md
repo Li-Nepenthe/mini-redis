@@ -238,3 +238,10 @@ docker run --rm --name mini-redis-local -p 127.0.0.1:6379:6379 -v mini-redis-dat
 官方 redis-cli、Docker build/run 和草稿 PR 的远端 CI 已通过。未验证：main 首页/默认分支徽章、用户脱稿口述。未用手按键盘代替自动信号测试；极端磁盘阻塞与大量过期时的请求尾延迟也没有测量。未实现：范围外 Redis 功能与 P2；AOF Rewrite 和全局内存/连接配额也没有。没有把“已有 CI/Docker 文件”当作“CI/Docker 通过”。
 
 S1–S5 已完成当前工程验收，S2 官方客户端已补齐；S6 本地、Docker 与审查 PR CI 验收通过，main 首页/默认分支徽章与本人学习验收尚未闭合。实际日期不能替代说明书的全阶段完成特征；当前不能宣布封版。下一步应补齐上述环境/权限相关验收并由使用者做学习自查，已有结果的命令与限制以 [notes.md](notes.md) 为准。
+
+
+## 复审补充：重放为何不能提前过期
+
+阅读 persistence_test.go 的 TestReplayPreservesHistoricalExpiryAndCreation：比较同一操作历史在原引擎与重放后的 TTL/GET/LRANGE。历史 EXPIRE 的期限已经早于“现在”，后面仍可能出现当时尚未过期的追加或有效续期；重放必须先还原完整历史再判断最终期限。清理 worker 不向 AOF 写删除，所以新的 List 创建用 _LNEW 留下边界，既覆盖惰性删除也覆盖主动清理、原 String 过期后变 List。Replay 不重新 Append；这两种内部记录都不能经客户端 Exec 调用。
+
+练习：先复现“LPUSH a→EXPIRE 1→LPUSH b→到期→重启”，再追踪“EXPIRE 5→第4秒 EXPIRE10→第6秒重启”。旧草稿日志没有新建边界，无法反推其中所有过期后重建；只读兼容不等于历史歧义被修复。工程范围和未验条件以 acceptance-matrix.md 为准，个人口述仍待自己学习。

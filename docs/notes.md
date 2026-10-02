@@ -500,3 +500,23 @@ S1–S5 当前本机工程验收完成；S6 的 Docker/客户端与真实停机�
 [CI 运行 36974612279](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36974612279) 对该实现提交成功；Ubuntu runner 的 checkout/setup-go、gofmt、完整 race、vet、Staticcheck v0.8.1、build 与收尾步骤全部 success，不是根据空 status 列表推断。来源记录为任务 work/validation/ci-run-1-jobs.json 与 ci-run-1-complete.json，推送/提交日志为 review-push.txt 与 review-commit-final.txt。本段为已完成运行的记录，同一审查分支的后续文档提交不改变代码；审查时仍以 PR 当前 HEAD 的 checks 为准。
 
 S1–S5 工程验收已完成；S6 的本机/Docker/官方客户端与审查 PR CI 均已通过。仍未合并 main，所以默认首页/徽章保留未勾选；本人七项口述尚未验收，不替其作答，未按日期宣布封版。没有部署、启用自动合并、变更安全配置或推进 P2。临时验收容器/卷已清理，Docker Desktop 与必要镜像保留。
+
+
+## 2026-10-02 · 独立复审：AOF 历史 TTL 修复
+
+用户追加授权：完成代码审查/测试后合并 P1，再实现说明书 P2 M1–M5；先完成工程再本人学习，不把代理讲解作为本人口述通过。此前“未授权合并/P2”的文字是历史快照，本段为当前范围。逐项覆盖、必做/推荐增强/排除项见 acceptance-matrix.md。
+
+独立只读审查在 HEAD 3382d0d 证实一处缺陷的两种表现：LPUSH a→EXPIRE5→LPUSH b→到期重开 AOF 变为 TTL=-1/List[b]；t0 SET+EXPIRE5、t4续期10、t6重放丢失仍应存活的值。根因是 Replay 以及普通写路径在历史重放中按重启当前时间提前删键。
+
+最小修复：重放 prepareWrite 跳过当前时间的惰性删除，绝对 EXPIREATMS 只恢复期限；完整历史恢复后读写/worker 再过期。正常 LPUSH 对不存在/已过期 key 持久化 _LNEW，明确重建 List 并清旧 TTL，避免旧类型/内容混入。无新增网络命令、无 AOF Rewrite。Replay 自己应用验证后的记录，不再调用可能重新追加的 executeWrite。
+
+增加固定时钟五场景（过期前追加/续期/过期后重建/String变List/已清理重建）、旧绝对期限兼容、不再追加、私有命令拒绝，以及真实 aof.Store 到期再重开回归。初步 go test ./database ./aof -run 'TestReplayPreservesHistorical|TestLegacyReplay|TestExpiredListWithLater' -count=1 -v 通过。全量 race/vet/Staticcheck/build、修复提交 CI 与 main 合并证据待实际完成后补记；没有把初测当作最终验收。
+
+旧草稿日志缺“过期后创建”标记，时间信息不足不能反推，已写 README 使用限制；不自动重写或替换用户 AOF。P2 下一步：同仓独立 module ai-backend 的 M1，MySQL 手写 SQL/鉴权/分页/索引实测，不引入说明书排除的功能。
+
+
+### 复审最终本机结果
+
+内部标记最终采用与 LPUSH 同为5字节的 _LNEW。独立复审发现较长私有名会使合法32MiB帧落盘超预算，已补精确最大帧通过回归；未扩大 Parser 限额。全量 go test -race ./... -count=1 -timeout=180s 通过（aof5.220s、database15.239s，其余包亦通过），随后 go vet、Staticcheck v0.8.1、go build 通过，gofmt与diff --check为空。Parser代码未改，不无理由重复十分钟Fuzz。
+
+已重新 docker build 修复镜像，并用官方 redis-cli +同一Linux guest等待验证：到期前追加List重启不复活；String续期仍保留（TTL15→13）；旧String过期后新List无旧值/TTL；SIGKILL137/OOMfalse重开AOF通过；SIGTERM退出0。独立只读审查额外运行200个种子×150步历史重放比较。原始证据在任务 work/validation/p1-review-fix-race-final.txt、p1-review-fix-docker-{build-final,events,result}；仅清理自有容器/卷。修复提交及main CI须后续实证，不能引用前一HEAD的绿灯作为本提交通过。

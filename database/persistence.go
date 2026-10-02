@@ -21,7 +21,7 @@ func (e *Engine) executeWrite(args [][]byte, cmd string) (any, error) {
 		e.logMu.Lock()
 		defer e.logMu.Unlock()
 	}
-	result, record, apply, unlock, err := e.prepareWrite(args, cmd)
+	result, record, apply, unlock, err := e.prepareWrite(args, cmd, false)
 	if unlock != nil {
 		defer unlock()
 	}
@@ -39,10 +39,10 @@ func (e *Engine) executeWrite(args [][]byte, cmd string) (any, error) {
 	return result, nil
 }
 
-func (e *Engine) prepareWrite(args [][]byte, cmd string) (result any, record [][]byte, apply func(), unlock func(), err error) {
+func (e *Engine) prepareWrite(args [][]byte, cmd string, replay bool) (result any, record [][]byte, apply func(), unlock func(), err error) {
 	valid := len(args) == 3
 	switch cmd {
-	case "LPUSH":
+	case "LPUSH", "_LNEW":
 		valid = len(args) >= 3
 	case "LPOP":
 		valid = len(args) == 2
@@ -65,8 +65,10 @@ func (e *Engine) prepareWrite(args [][]byte, cmd string) (result any, record [][
 	}
 	unlock = e.lockKeys(keys, true)
 	now := e.now()
-	for _, key := range keys {
-		e.getShard(string(key)).purgeExpired(string(key), now)
+	if !replay {
+		for _, key := range keys {
+			e.getShard(string(key)).purgeExpired(string(key), now)
+		}
 	}
 	key := string(args[1])
 	s := e.getShard(key)
@@ -78,17 +80,28 @@ func (e *Engine) prepareWrite(args [][]byte, cmd string) (result any, record [][
 			s.clearExpiration(key)
 			s.data[key] = value
 		}, unlock, nil
-	case "LPUSH":
+	case "LPUSH", "_LNEW":
 		list := NewLinkedList()
-		if raw, exists := s.data[key]; exists {
+		raw, exists := s.data[key]
+		fresh := !exists || cmd == "_LNEW"
+		if !fresh {
 			var ok bool
 			list, ok = raw.(*LinkedList)
 			if !ok {
 				return nil, nil, nil, unlock, ErrTypeMismatch
 			}
 		}
+		if fresh {
+			// 过期清理不写 AOF；必须记下「新建 List」边界，否则重放时旧值/TTL
+			// 会混入过期后的新 List。私有命令与 LPUSH 同为 5 字节，参数数目也不变，
+			// 避免合法的最大请求在落盘时超出已有 RESP 帧预算。
+			record[0] = []byte("_LNEW")
+		}
 		length := list.Len() + len(args) - 2
 		return length, record, func() {
+			if fresh {
+				s.clearExpiration(key)
+			}
 			for _, value := range args[2:] {
 				list.LPush(value)
 			}
@@ -164,13 +177,20 @@ func (e *Engine) Replay(args [][]byte) error {
 		defer s.mu.Unlock()
 		if _, exists := s.data[key]; exists {
 			s.setExpiration(key, time.UnixMilli(millis))
-			s.purgeExpired(key, e.now())
 		}
 		return nil
 	}
 	switch cmd {
-	case "SET", "LPUSH", "LPOP", "DEL":
-		_, err := e.executeWrite(args, cmd)
+	case "SET", "LPUSH", "_LNEW", "LPOP", "DEL":
+		// 重放历史操作时不能按重启时间提前删键：后面的续期仍可能有效。
+		// 完整重放后，普通读/写和清理 worker 再按当前时间处理最终期限。
+		_, _, apply, unlock, err := e.prepareWrite(args, cmd, true)
+		if unlock != nil {
+			defer unlock()
+		}
+		if err == nil && apply != nil {
+			apply()
+		}
 		return err
 	default:
 		return fmt.Errorf("invalid persisted command: %s", cmd)
