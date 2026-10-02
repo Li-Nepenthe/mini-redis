@@ -119,3 +119,7 @@ docker run --rm --name mini-redis-local -p 127.0.0.1:6379:6379 -v mini-redis-dat
 重放全部历史写入期间不以重启时间提前删键，避免过期前追加的 List 永久复活、续期后的 String 丢失。新建 List 的持久化命令为内部 _LNEW（网络不开放），明确清除旧值/TTL；重放结束后普通访问与清理 worker 按当前时间删除最终过期键。EXPIRE 仍使用绝对 __EXPIREATMS，未增加网络命令或 AOF Rewrite。
 
 旧草稿版本的 SET/LPUSH/LPOP/DEL/绝对过期记录仍可读取。旧日志没有记录“过期后 LPUSH 创建新 List”的边界，无法事后区分该情况和过期前追加；这类旧数据应先保留原文件并人工核对，不能声称能无损推断。新的日志记录解决该歧义。
+
+## 从零学习与全覆盖备注
+
+[学习教程](docs/learning-guide.md)按十章讲清问题、基础、请求、命令、并发、TTL、AOF、停机和验证；[完整参考答案](docs/tutorial/09-answers.md)逐题给推导、常错和纠偏，并提供S6七点及3/15分钟示范。每个包与全部具名函数（含未导出、平台、测试、fuzz/基准）都有用途与边界注释，明细见[注释审计](docs/comment-coverage.md)和[教学覆盖矩阵](docs/teaching-coverage.md)。教学顺序模拟从零构建，不是提交历史；材料与个人学习验收分开，P2继续暂停。

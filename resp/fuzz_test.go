@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// FuzzParseStream 用 f 注册正常、多帧、边界和损坏输入种子，再对变异字节运行 Parser。
+// 回调断言 Payload 非 nil、Data/Err 互斥、完整帧 BytesRead 合法，防止 panic 与无效状态；普通 test 只跑种子，长 fuzz 需显式 -fuzz。
 func FuzzParseStream(f *testing.F) {
 	seeds := [][]byte{
 		{},
@@ -28,6 +30,7 @@ func FuzzParseStream(f *testing.F) {
 		f.Add(seed)
 	}
 
+	// 每次变异只用有限 bytes.Reader，读到通道关闭；这里只断言结构/边界，业务语义另由命令测试覆盖。
 	f.Fuzz(func(t *testing.T, data []byte) {
 		parser := NewRespParser()
 		for payload := range parser.ParseStream(context.Background(), bytes.NewReader(data)) {

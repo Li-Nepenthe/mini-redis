@@ -14,7 +14,9 @@
     </style>
 </head>
 <body>
-<h2>Mini-Redis 高并发架构与数据生命周期</h2>
+<h2>Mini-Redis 数据流历史草稿（2026-08-22）</h2>
+<p style="max-width: 900px; line-height: 1.7">本图保留早期学习历史，不代表当前实现：Engine 已完成；客户端实际在 cmd/client/main.go；ParseStream 当前接收 context 与 reader；读取头使用有界 ReadSlice，不能称 ReadBytes 为零拷贝；图中 *2 的单 PING 示例参数不完整；干净 EOF 不发送错误 Payload。当前有 TTL、AOF、错误编码和停机门，本草稿未画出。</p>
+<p>当前实现请看 <a href="docs/learning-guide.md">从零到一教程</a>、<a href="docs/tutorial/07-lifecycle.md">生命周期说明</a> 和源代码契约，不依据图中“未来/未完成”标记安排新功能。</p>
 <div class="mermaid">
     sequenceDiagram
     autonumber

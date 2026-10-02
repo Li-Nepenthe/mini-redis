@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+// main 解析 -addr/-aof 参数，订阅 Ctrl+C/SIGTERM，并将信号 context 交给 run 启动服务。
+// -aof 为空关闭持久化；run 返回错误时记录并退出进程。正常退出取消信号订阅，无业务返回值。
 func main() {
 	addr := flag.String("addr", ":6379", "TCP listen address")
 	aofPath := flag.String("aof", "data/appendonly.aof", "AOF file; empty disables persistence")
@@ -29,6 +31,10 @@ func main() {
 	}
 }
 
+// run 根据 addr 启动 TCP 服务，根据 aofPath 选择恢复并绑定日志；ctx 已取消时直接返回 nil。
+// 先获得监听端口再打开 AOF，避免重复启动时碰触在用日志；依次组装 16 分片 Engine、Parser、Handler 和 Server。
+// 拥有清理 worker、信号观察 goroutine 和文件：网络结束后取消并等待 worker，再 Close AOF；defer 后进先出保障该顺序。
+// 返回监听/恢复/服务/文件关闭错误。2 秒是网络排空预算，不能强行取消任意 Exec、fsync 或同步 GC。
 func run(ctx context.Context, addr, aofPath string) (runErr error) {
 	if ctx.Err() != nil {
 		return nil

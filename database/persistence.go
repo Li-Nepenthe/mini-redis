@@ -10,14 +10,17 @@ import (
 
 // Append 成功必须包含刷盘成功，才能保证先日志后内存的确认边界。
 type CommandLog interface {
+	// Append 确认 args 的完整记录及同步；nil 才允许调用者提交内存，错误不得伪装成功。
 	Append(args [][]byte) error
 }
 
-// 仅启动时重放后、启动 worker 前绑定，避免重放再追加和并发更换日志。
+// AttachLog 将 log 绑定为后续写命令的确认日志；传 nil 表示不持久化，没有返回值。
+// 不加锁，仅允许启动阶段在恢复后、并发服务/worker 开始前调用；运行时更换会产生数据竞争与确认边界歧义。
 func (e *Engine) AttachLog(log CommandLog) { e.log = log }
 
-// AOF 模式按 logMu → 有序 shard 锁 → Store.mu 获取锁，保证内存提交与日志顺序相同。
-// 读者只用 shard 锁，因而同分片读也会等待 fsync；这是确认语义的明确代价。
+// executeWrite 执行已归一化 cmd 的写命令，对 args 校验并准备结果，然后确认日志，最后应用内存变更。
+// 返回命令结果/业务错误；日志失败包装为公开 persistence write failed 并保留内部原因，绝不调用 apply。无效果写入不追加。
+// AOF 模式锁顺序为 logMu→有序 shard 锁→Store.mu，使内存提交顺序与日志一致；同分片读可能等待 fsync，这是确认语义的代价。
 func (e *Engine) executeWrite(args [][]byte, cmd string) (any, error) {
 	if e.log != nil {
 		e.logMu.Lock()
@@ -41,9 +44,10 @@ func (e *Engine) executeWrite(args [][]byte, cmd string) (any, error) {
 	return result, nil
 }
 
-// 把“检查并准备”与“修改业务值”分开：Append/Sync 失败时不调用 apply。
-// apply 捕获的 List/状态必须在同一批 shard 锁内使用；即使返回错误，调用者也要执行 unlock。
-// replay 跳过当前时间的惰性过期，否则历史中后续的续期/追加会基于被提前删除的状态执行。
+// prepareWrite 在 args 的参数/类型合法时，为归一化 cmd 准备 result、持久化 record、延迟修改 apply 和释放分片锁的 unlock。
+// 错误或无效果操作可返回 nil apply/record；即使 err 非 nil，只要 unlock 非 nil 调用者仍须执行。apply 只能在同一批分片锁内调用一次。
+// 正常路径可先惰性删除已过期旧值；这不表示新业务写入成功。replay 跳过按当前时间删历史值，避免续期/追加基于提前删除的状态执行。
+// SET 清 TTL，List 新建记录 _LNEW，EXPIRE 记录绝对期限或 DEL；record/闭包引用的参数调用期间必须保持不变。
 func (e *Engine) prepareWrite(args [][]byte, cmd string, replay bool) (result any, record [][]byte, apply func(), unlock func(), err error) {
 	valid := len(args) == 3
 	switch cmd {
@@ -78,6 +82,8 @@ func (e *Engine) prepareWrite(args [][]byte, cmd string, replay bool) (result an
 	key := string(args[1])
 	s := e.getShard(key)
 	record = append([][]byte{[]byte(cmd)}, args[1:]...)
+	// 以下 apply 闭包捕获已校验状态，统一由调用者在原分片锁内、日志确认后执行。
+	// 不能提前运行闭包，也不能解锁后再使用捕获的共享 List；恢复路径不再次写日志。
 	switch cmd {
 	case "SET":
 		value := append([]byte(nil), args[2]...)
@@ -162,7 +168,9 @@ func (e *Engine) prepareWrite(args [][]byte, cmd string, replay bool) (result an
 	return nil, nil, nil, unlock, ErrUnknownCmd
 }
 
-// 重放只接受持久化写命令；绝对期限只供 AOF 使用，不向网络客户端开放。
+// Replay 将 args 作为一条历史持久化记录恢复到内存，返回非法记录/类型/参数错误，不调用 Append。
+// 接受 SET/LPUSH/_LNEW/LPOP/DEL 和私有 __EXPIREATMS；后者记录绝对毫秒期限，缺失 key 不新增数据。
+// 历史回放不按重启当前时间提前过期；先还原所有记录，再由正常访问/worker 判断最终期限。调用者在服务启动前顺序调用，错误时不能把半恢复状态投入服务。
 func (e *Engine) Replay(args [][]byte) error {
 	if len(args) == 0 {
 		return ErrUnknownCmd
