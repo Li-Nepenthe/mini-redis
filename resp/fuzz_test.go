@@ -2,6 +2,7 @@ package resp
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 )
@@ -18,6 +19,9 @@ func FuzzParseStream(f *testing.F) {
 		[]byte("*1\r\n$5\r\nabc"),
 		[]byte("*x\r\n"),
 		{0x00, 0xff, '\r', '\n'},
+		bytes.Repeat([]byte("9"), MaxHeaderLength+1),
+		[]byte("*1\n$3\r\nGET\r\n"),
+		[]byte("*0\r\n"),
 	}
 
 	for _, seed := range seeds {
@@ -26,12 +30,15 @@ func FuzzParseStream(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		parser := NewRespParser()
-		for payload := range parser.ParseStream(bytes.NewReader(data)) {
+		for payload := range parser.ParseStream(context.Background(), bytes.NewReader(data)) {
 			if payload == nil {
 				t.Fatal("ParseStream() 返回了 nil Payload")
 			}
 			if (payload.Err == nil) == (payload.Data == nil) {
 				t.Fatal("Payload 必须且只能包含 Data 或 Err 之一")
+			}
+			if payload.Err == nil && (payload.BytesRead <= 0 || payload.BytesRead > MaxRequestLength) {
+				t.Fatal("complete record has invalid wire byte count")
 			}
 		}
 	})

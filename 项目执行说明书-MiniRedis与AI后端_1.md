@@ -239,9 +239,14 @@ P2  AI 应用后端平台      工程主项目：业务工程 + AI 工程
 
 **未完成**：5 个致命缺陷（见 S1）· 缺 PING/DEL/EXPIRE/TTL/EXISTS/LRANGE · 无 AOF · 无优雅关闭 · 无 Fuzz · 无 Benchmark · 无 Dockerfile/CI · README 内容需替换
 
+**2026-10-02 复核备注**：上述内容保留为 08/22 的历史快照，不作为本轮未完成项清单。实际本地为 `main@6daf725`，开始时无未提交修改、无未推送提交；已有数组/bulk 上限、负长度校验及 Fuzz 骨架。§6 尚无阶段完成记录，本轮从 S1 的连接生命周期和输入预算补齐开始，S2–S6 未实施。详细改动、验证结果、使用约束与剩余项见 [docs/notes.md](docs/notes.md)。
+
+
 ---
 
 ## S1 · 安全与正确性（第 1—2 周）
+
+**本轮备注（2026-10-02）**：任务 3、4 的长度校验在基线已实现，任务 2 的 Fuzz 文件也已存在；本轮不重复记为新工作。补齐任务 5–7、协议头和整条请求的限额，并逐项执行验收。本轮 S1 工程验收已通过，六项可执行完成特征已勾选；学习问答待使用者口述确认，下一阶段为 S2。
 
 **目标**：任意畸形输入都无法使服务崩溃或耗尽内存。
 
@@ -266,26 +271,28 @@ func FuzzParseStream(f *testing.F) {
     f.Add("*-1\r\n")
     f.Add("*1\r\n$-1\r\n")
     f.Fuzz(func(t *testing.T, data string) {
-        ch := NewRespParser().ParseStream(strings.NewReader(data))
+        ch := NewRespParser().ParseStream(context.Background(), strings.NewReader(data))
         for range ch {}
     })
 }
 ```
 
-**✅ 完成特征**
+**完成特征**
 
-- [ ] `printf '*-1\r\n' | nc localhost 6379` 后服务器仍在运行，其他连接不受影响
-- [ ] `printf '*1000000000\r\n' | nc localhost 6379` 后内存不暴涨，返回协议错误
-- [ ] 同时启动两个 server，第二个打印 "address already in use"，而非 nil pointer 栈
-- [ ] `staticcheck ./...` 输出为空
-- [ ] `go test -fuzz=FuzzParseStream -fuzztime=10m ./resp` 无 crash
-- [ ] 建立 100 条连接后全部异常断开，`runtime.NumGoroutine()` 回到基线
+- [x] `printf '*-1\r\n' | nc localhost 6379` 后服务器仍在运行，其他连接不受影响
+- [x] `printf '*1000000000\r\n' | nc localhost 6379` 后内存不暴涨，返回协议错误
+- [x] 同时启动两个 server，第二个打印 "address already in use"，而非 nil pointer 栈
+- [x] `staticcheck ./...` 输出为空
+- [x] `go test -fuzz=FuzzParseStream -fuzztime=10m ./resp` 无 crash
+- [x] 建立 100 条连接后全部异常断开，`runtime.NumGoroutine()` 回到基线
 
 **完成后必须能回答**：为什么校验要在分配之前 · goroutine 泄漏的常见成因有哪几类 · `Temporary()` 为什么被废弃 · Fuzz 的语料是怎么演化的
 
 ---
 
 ## S2 · 命令完整（第 3 周）
+
+**10/02 最终验收备注**：大小写、多值 LPUSH、PING/DEL/EXISTS/LRANGE、Redis 风格错误和回复数组已实现；普通测试、真实 TCP 与最终全量 race 通过。已用官方 redis-cli 8.10.2 在 Docker 中连续执行 20 条混合命令，四次采样保持同一个 TCP socket；本阶段本机工程验收完成，学习问答仍需本人回答，详见 docs/notes.md 最新记录。
 
 **目标**：`redis-cli` 能像操作真 Redis 一样操作它。
 
@@ -297,20 +304,22 @@ func FuzzParseStream(f *testing.F) {
 4. 不再向客户端回写内部错误链
 5. 每个命令补表驱动测试，含类型冲突用例（对 String 执行 LPOP）
 
-**✅ 完成特征**
+**完成特征**
 
-- [ ] `redis-cli -p 6379 ping` 返回 PONG
-- [ ] `redis-cli -p 6379 set foo bar`（小写）成功
-- [ ] `lpush mylist a b c` 后 `lrange mylist 0 -1` 返回正确内容与顺序
-- [ ] 对 String 执行 `lpop` 返回 `WRONGTYPE` 开头的错误
-- [ ] `redis-cli` 连续执行 20 条命令不断连
-- [ ] `go test -race ./...` 通过
+- [x] `redis-cli -p 6379 ping` 返回 PONG（官方容器客户端实测）
+- [x] `redis-cli -p 6379 set foo bar`（小写）成功（官方容器客户端实测）
+- [x] `lpush mylist a b c` 后 `lrange mylist 0 -1` 返回正确内容与顺序（官方容器客户端实测）
+- [x] 对 String 执行 `lpop` 返回 `WRONGTYPE` 开头的错误（官方容器客户端实测）
+- [x] `redis-cli` 连续执行 20 条命令不断连（官方容器客户端实测）
+- [x] `go test -race ./...` 通过（10/02 内存修复后全量复验，无竞态报告）
 
 **完成后必须能回答**：RESP 请求为什么统一用数组格式 · 类型不匹配应该返回什么错误码 · 错误响应为什么不能包含内部错误链
 
 ---
 
 ## S3 · TTL（第 4 周）
+
+**10/02 最终验收备注**：EXPIRE/TTL、惰性删除、有界随机清理和 context 回收已实现。实际服务 5 秒 TTL 为 5 → 3 → -2，到期 GET 为 nil，永久 TTL 为 -1；10 万 key、256-byte value、5 秒 TTL、无 AOF/后续读取，修复后工作集在 15 秒内从 82,616,320 降至 25,841,664 bytes。修复为主动删除累计 32,768 后在锁外限频请求 GC，两次至少间隔 5 秒。全量 race、普通测试、真实 Windows Ctrl+C 与清理退出通过，完成当前本机工程验收；参考问答仍需本人学习，详见 docs/notes.md。
 
 **目标**：key 按时过期，且过期 key 不会永久占用内存。
 
@@ -321,20 +330,22 @@ func FuzzParseStream(f *testing.F) {
 3. 定期清理：后台 goroutine 随机抽样，必须能被 context 取消
 4. 语义写入 README：key 不存在返回什么 · 无 TTL 返回什么 · SET 是否覆盖 TTL · List 操作是否保留 TTL
 
-**✅ 完成特征**
+**完成特征**
 
-- [ ] `SET k v` → `EXPIRE k 5` → `TTL k` 返回递减秒数
-- [ ] 5 秒后 `GET k` 返回 nil，`TTL k` 返回 -2
-- [ ] 对无过期时间的 key 执行 `TTL` 返回 -1
-- [ ] 写入 10 万个 5 秒过期的 key 且不读取，30 秒后进程内存回落
-- [ ] `Ctrl+C` 时后台清理 goroutine 干净退出，无泄漏
-- [ ] `go test -race ./...` 通过
+- [x] `SET k v` → `EXPIRE k 5` → `TTL k` 返回递减秒数（实际 TCP：5 → 3）
+- [x] 5 秒后 `GET k` 返回 nil，`TTL k` 返回 -2（实际主程序验收）
+- [x] 对无过期时间的 key 执行 `TTL` 返回 -1（实际主程序验收）
+- [x] 写入 10 万个 5 秒过期的 key 且不读取，30 秒后进程内存回落（Windows 工作集实测；15 秒回落约 69%，不保证回到启动值）
+- [x] `Ctrl+C` 时后台清理 goroutine 干净退出，无泄漏（真实 Windows CTRL_C_EVENT、退出码 0；取消等待与 goroutine 回归通过）
+- [x] `go test -race ./...` 通过（10/02 内存修复后全量复验，无竞态报告）
 
 **完成后必须能回答**：为什么惰性与定期两种策略都需要 · 为什么不给每个 key 起定时器 · 清理时为什么不能长时间持有锁
 
 ---
 
 ## S4 · AOF（第 5 周）
+
+**10/02 最终验收备注**：实际主程序经 Windows 强制终止（不运行正常关闭）后恢复全部 1000 个已确认 SET；实际 AOF 文件最后一帧截去一半后重启，仅最后一个 key 缺失，其余 999 个保留。真实 Ctrl+C/重启的 String/List、绝对 TTL 与 full race 也通过。本机 Windows 强制终止与 Docker 内原生 Linux SIGKILL 路径均已通过，详见 docs/notes.md。
 
 **目标**：崩溃后数据在明确定义的窗口内不丢失。
 
@@ -347,13 +358,13 @@ func FuzzParseStream(f *testing.F) {
 5. AOF 写入失败不得静默忽略
 6. README 写明崩溃窗口：写入顺序 · 最坏丢失多少秒数据 · 内存与文件何时不一致
 
-**✅ 完成特征**
+**完成特征**
 
-- [ ] `SET k v` → `kill -9` → 重启 → `GET k` 返回 v
-- [ ] 连续写 1000 条 → kill → 重启 → 数据条数正确
-- [ ] 手工截断 AOF 尾部半条命令 → 重启 → 服务正常启动，仅丢最后一条
-- [ ] 带 TTL 的 key 重启后过期语义与 README 描述一致
-- [ ] README 含"崩溃窗口"一节
+- [x] `SET k v` → `kill -9` → 重启 → `GET k` 返回 v（10/02 Windows 强制终止及 Docker 内 Linux SIGKILL 实测，不经过 Close）
+- [x] 连续写 1000 条 → kill → 重启 → 数据条数正确（实际主程序 1000/1000 已确认写入恢复）
+- [x] 手工截断 AOF 尾部半条命令 → 重启 → 服务正常启动，仅丢最后一条（实际文件截断的自动验收：999 保留、最后一条 nil）
+- [x] 带 TTL 的 key 重启后过期语义与 README 描述一致（10/02 自动重启/过期测试通过）
+- [x] README 含"崩溃窗口"一节（10/02：always-fsync、先日志后内存、TTL 与未确认写入边界）
 
 **完成后必须能回答**：先写日志还是先改内存，各自的失败后果 · fsync 的代价 · 为什么真实 Redis 需要 Rewrite
 
@@ -375,12 +386,12 @@ func FuzzParseStream(f *testing.F) {
 
 报告注明：CPU 型号 · 内存 · Go 版本 · 测试命令 · key 数量 · 并发数。
 
-**✅ 完成特征**
+**完成特征**
 
-- [ ] 3×3 表格填满，数据来自 `go test -bench=. -benchmem`
-- [ ] 能指出至少一个分片没有优势甚至更慢的场景，并解释原因
-- [ ] 有一份 `pprof` CPU profile，能指出热点函数
-- [ ] 结论写入 README，附完整环境说明
+- [x] 3×3 表格填满，数据来自 `go test -bench=. -benchmem`（10/02 工程验收，详见 docs/performance.md）
+- [x] 能指出至少一个分片没有优势甚至更慢的场景，并解释原因（10/02 工程验收，详见 docs/performance.md）
+- [x] 有一份 `pprof` CPU profile，能指出热点函数（10/02 工程验收，详见 docs/performance.md）
+- [x] 结论写入 README，附完整环境说明（10/02 工程验收，详见 docs/performance.md）
 
 **完成后必须能回答**：分片数为什么取 2 的幂 · 热点 key 场景下分片为什么可能失效 · 缓存行伪共享是什么
 
@@ -427,14 +438,14 @@ func FuzzParseStream(f *testing.F) {
 ## 已知限制
 ```
 
-**✅ 完成特征**
+**完成特征**
 
-- [ ] `docker build` + `docker run` 能起服务，`redis-cli` 能连
-- [ ] GitHub Actions 徽章为绿
-- [ ] `Ctrl+C` 后进程 3 秒内干净退出，AOF 已 flush
+- [x] `docker build` + `docker run` 能起服务，`redis-cli` 能连（10/02 Docker 29.7.2、官方 redis-cli 8.10.2 实测；非 root/命名卷/本机端口通过）
+- [ ] GitHub Actions 徽章为绿（草稿 PR #1 CI 已全绿；main 默认徽章需合并后再验）
+- [x] `Ctrl+C` 后进程 3 秒内干净退出，AOF 已 flush（10/02 真实 Windows CTRL_C_EVENT，约 1.6–3.0ms、退出码 0；AOF 重开重放通过，极端 I/O 未测）
 - [ ] GitHub 仓库首页显示的是项目文档
-- [ ] 全仓库搜索 emoji 结果为零
-- [ ] `gofmt -l .` 输出为空
+- [x] 全仓库搜索 emoji 结果为零（10/02 本地字符清理，最终复核见 docs/notes.md）
+- [x] `gofmt -l .` 输出为空（10/02 本地复核）
 - [ ] 能脱稿讲清 7 点：TCP 粘包半包 · RESP 解析 · 分片锁 · TTL 双策略 · AOF 崩溃窗口 · goroutine 生命周期 · S1 修复的两个崩溃缺陷
 
 ## 3.5 封版标准
@@ -625,7 +636,7 @@ GET    /health/live   /health/ready   /metrics
 - 连接池参数及理由
 - 一个事务场景的边界与失败处理
 
-**✅ 完成特征**
+**完成特征**
 
 - [ ] `curl` 能完成注册 → 登录 → 获取 JWT
 - [ ] 带错误 token 访问返回 401
@@ -665,7 +676,7 @@ type Provider interface {
 8. 消息落库 + token 用量记录
 9. 最简前端：流式聊天页面
 
-**✅ 完成特征**
+**完成特征**
 
 - [ ] 浏览器提问时文字逐字出现，非一次性返回
 - [ ] 关闭浏览器标签页，服务端日志立即打印上游取消
@@ -695,7 +706,7 @@ type Provider interface {
 6. 限流：令牌桶，用户级 + 全局两层，Redis + Lua 保证原子
 7. 幂等：`Idempotency-Key` 头，重复提交返回首次结果
 
-**✅ 完成特征**
+**完成特征**
 
 - [ ] 同一问题第二次提问，响应时间从秒级降到毫秒级
 - [ ] 同时发起 50 个相同请求，对模型的调用次数为 1
@@ -726,7 +737,7 @@ type Provider interface {
 7. 任务进度通过 SSE 推送
 8. Worker 优雅停机：不丢正在处理的任务
 
-**✅ 完成特征**
+**完成特征**
 
 - [ ] 上传 10MB 文档，接口 500ms 内返回 `task_id`
 - [ ] 前端进度条从 0% 走到 100%，中间状态实时更新
@@ -773,7 +784,7 @@ type Provider interface {
 - 压测：QPS · P99 · 缓存命中率 · singleflight 开关对照
 - README + 架构图 + 故障排查文档
 
-**✅ 完成特征**
+**完成特征**
 
 - [ ] 回答末尾带具体引用（文档名 + 段落），可溯源到原文
 - [ ] 对文档中无答案的问题，系统明确回答检索不到依据
@@ -823,12 +834,12 @@ type Provider interface {
 
 ## P1 · Mini-Redis
 
-- [ ] S1 安全与正确性　　目标 09/04　实际 ______
-- [ ] S2 命令完整　　　　目标 09/11　实际 ______
-- [ ] S3 TTL　　　　　　目标 09/18　实际 ______
-- [ ] S4 AOF　　　　　　目标 09/25　实际 ______
-- [ ] S5 性能数据　　　　目标 09/29　实际 ______
-- [ ] S6 工程化与封版　　目标 10/02　实际 ______
+- [x] S1 安全与正确性　　目标 09/04　实际 2026-10-02（工程验收完成；见 docs/notes.md；学习问答待口述确认）
+- [x] S2 命令完整　　　　目标 09/11　实际 2026-10-02（官方客户端同 socket 20 命令、普通/TCP/全量 race 通过；学习问答待口述）
+- [x] S3 TTL　　　　　　目标 09/18　实际 2026-10-02（工程验收完成；真实 TTL/10 万 key 工作集/信号/全量 race 通过，学习问答待口述）
+- [x] S4 AOF　　　　　　目标 09/25　实际 2026-10-02（本机 Windows 工程验收完成；真实强制终止/半尾文件/TTL 恢复及全量 race 通过，学习问答待口述）
+- [x] S5 性能数据　　　　目标 09/29　实际 2026-10-02（工程数据/分析完成，学习问答未代答）
+- [ ] S6 工程化与封版　　目标 10/02　实际 ______（10/02 本地/Docker/官方客户端/停机/全量 race 通过；草稿 PR #1 CI 已通过，main 首页/默认徽章与学习口述待补）
 
 ## P2 · AI 应用后端
 

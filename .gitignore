@@ -1,4 +1,10 @@
 .idea/
 .claude/
 *.exe
-.docx_qa_resignation/
+data/
+*.aof
+audit.sh
+*-audit.txt
+ROADMAP.md
+*.pprof
+*.test
