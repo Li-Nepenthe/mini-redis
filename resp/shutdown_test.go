@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// TestShutdownTimeoutDoesNotHideBlockedExecutor 将执行器阻塞到 release，验证 Shutdown 到期返回 DeadlineExceeded 而不假装工作结束。
+// t 随后释放执行器并等待 Handle/Close，证明网络超时与最终回收是两个动作；不向外部服务发信号。
 func TestShutdownTimeoutDoesNotHideBlockedExecutor(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	handler := NewRespHandler(NewRespParser(), executorFunc(func([][]byte) (any, error) {

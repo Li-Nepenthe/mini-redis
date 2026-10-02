@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// request 将 parts 按字节长度编码为 RESP 数组请求并返回字符串，供 TCP 测试构造二进制/错误命令。
+// 不连接服务器或验证业务含义；字符串长度为字节数，内容可含零字节。
 func request(parts ...string) string {
 	var data strings.Builder
 	data.WriteString("*" + strconv.Itoa(len(parts)) + "\r\n")
@@ -15,6 +17,8 @@ func request(parts ...string) string {
 	return data.String()
 }
 
+// TestTwentyCommandsOnOneConnection 在一个真实 TCP 连接顺序执行 20 条命令，检查正常值、错误、List 和缺失值的准确回复。
+// t 同时验证业务错误不会断连及回复边界持续同步；独立临时 listener/连接由测试清理。
 func TestTwentyCommandsOnOneConnection(t *testing.T) {
 	_, listener, _, _ := startServer(t)
 	conn := dial(t, listener.Addr().String())

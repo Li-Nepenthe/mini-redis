@@ -566,3 +566,27 @@ gofmt -l .
 独立只读审查14d27ba对照Engine/TTL/Persistence/Parser/Reply/Handler/TCP/Main/AOF，确认技术准确、锁/所有权/实验与阶段边界正确，8个Go文件仅25行注释；原样内存/本机race证据一致。补齐三项Go初学者前置：interface/any/类型断言与Engine→CommandExecutor；WaitGroup Add/Done/Wait、Once；cause/Unwrap/%w、errors.Is/As与错误文本身份。指南成为557行；普通命令/链接再次核对，新增错误短例提取编译运行：true、true和公开ERR，见p1-learning-error-example.txt。修订只涉及文档，没有应用功能/新负载测试。
 
 14d27ba的CI37000318453两模块全部步骤success；该证据只属于初稿。最终修订的独立复核与准确HEAD CI在PR #3检查，必须实际返回才合并，不以初稿绿灯代替。个人脱稿/口述仍待自己完成；从指南第一轮开始，不安排P2下一功能。
+
+## 2026-10-02 · 全包全函数注释与从零教程补齐
+
+使用者指出上一轮仅关键WHY备注、提示式自测不足；最新要求覆盖每包/每功能函数，并提供从0到1深度教程及所有问题的完整参考答案。原说明书S6“只写为什么”按本次明确指令更新为用途/参数/返回/错误/副作用及必要WHY；不逐行冗余注释，不改应用行为，不推进P2。
+
+### 实际覆盖审计
+
+基线main4ae13a7干净，原有6份ignored .idea保留；新独立工作区codex/p1-complete-comments-20261002。Go AST遍历全部P1 Git Go文件，含Linux/Windows、未导出、所有测试/fake/基准/fuzz以及tcp_test：7包、152个FuncDecl（生产61、测试等91），首轮缺包说明7、缺函数注释133。已有19份也改为完整契约。补齐后7包/152函数缺Doc为0、解释候选不足为0，另11项命名接口方法/嵌入契约缺失为0。新7个包说明文件使Go文件33→40；原33文件非注释代码token与基线完全一致，新文件仅package声明与注释。明细见docs/comment-coverage.md；AST字数/中文只能筛候选，最终语义需要独立逐函数对照，不将0缺漏冒充语义证明。
+
+### 教学正文与问题答案
+
+docs/tutorial/00–09十章按模拟从零的依赖顺序讲问题/Go最少前置、空目录、协议、Engine/List、锁、TTL/内存、AOF/历史、停机、验证与32题完整答案。主指南有递进导航，旧第11章提示表改为完整答案映射；每题给推导/依据、常见错误及如何纠偏，说明书S1–S5全部问题、S6七点与旧第二层追问都有映射。Q30有3分钟全稿和15分钟含画图/演示的完整脚本，时间需本人练习，不替本人验收。docs/teaching-coverage.md关联主题、函数、例子、实验、题答。系统架构.html标明08/22历史草稿并指出旧签名、Engine未完成、ReadBytes零拷贝、残PING示例与EOF描述过时，当前实现以源码/教程为准。
+
+### 本轮已运行验证
+
+Go1.27.1、Windows/amd64，仅项目子进程使用已有便携GCC供race，Staticcheck v0.8.1。根P1依次执行：go test ./... -count=1 -timeout=60s；go test -race ./... -count=1 -timeout=180s；go vet ./...；staticcheck ./...；go build ./...；gofmt检查aof/cmd/database/resp/tcp。全部退出0，格式无文件输出。源码仅注释/包说明，但仍运行普通与race全量；没有改P2代码，P2依赖不会被根模块检查自动跨入。
+
+从正文原样提取五个完整Go程序，在独立学习目录/本地replace根模块编译运行：第1章stored=v与SET/GET转义回复；第2章3-byte reader解析两条记录27/20；第3章九条准确业务/错误RESP输出；第4章并发元素数6；第6章真实自有临时AOF恢复v且尾字节匹配true。输出与正文预期逐字一致。206个源码/文档链接存在；28条run模式核对真实测试名，benchmark的^$明确为刻意不跑普通测试，不以空匹配为通过。
+
+原始日志位于任务work/validation/p1-complete-*.txt；机器可读统计p1-comments-before/after.json、token等价p1-comments-token-equivalence.json、检查p1-complete-checks.json、材料p1-complete-material-checks.json。首次本轮验证无失败；历史TTL/OS工作集、Provider故障与修复保留先前记录，不改写为本轮新发现。两次10分钟fuzz、9格三样本benchmark、真实OS信号/Docker/OS工作集本轮未重跑（无行为改变）；教程诚实引用原功能版本证据而不宣称新结果。
+
+### 后续审查与边界
+
+稳定提交将独立进行152函数/接口与实现一致性、初学者可读性和完整问答检查，准确HEAD的CI实际通过后才按已有授权合并；不以main4ae13a7旧绿灯代新检查。Library按原身份保存新版本，单篇学习指南包含所有正文，ZIP包含全部章节及配套资料，不再限四文件；实际回执在本轮交付记录。个人自测/七项口述/3与15分钟仍待本人，description/topics缺对应写入工具；P2仅M1已合并、Provider5a973b7两个本地提交，M2未整体完成，后续暂停。

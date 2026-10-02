@@ -6,11 +6,8 @@ import (
 	"testing"
 )
 
-// 这是 Go 识别测试的固定规则：函数名以 Test 开头，并接收 *testing.T作为参数 go test 会自动扫描并运行它
-// TestEncodeReply这个测试函数需要 Go 测试框架传给我一个 t t 的类型是 *testing.T
-// testing是Go标准库中的测试包
-// testing.T 是 Go 为“一次测试”创建的对象，里面记录：
-// 当前测试是否失败、测试日志、测试名称、子测试、清理函数等
+// TestEncodeReply 用 parentT 的表驱动子测试验证 nil/空 bulk/字节/整数/true/内部错误的准确编码及不支持类型报错。
+// 区分业务错误编码结果与函数的 Go error；比较字节而非界面显示，无网络 I/O。
 func TestEncodeReply(parentT *testing.T) {
 	// tests := []struct { ... }{ ... } 是一个结构体切片
 

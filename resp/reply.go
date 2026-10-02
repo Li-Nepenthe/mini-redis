@@ -8,11 +8,13 @@ import (
 )
 
 type publicError interface {
+	// RESPError 提供可公开的码和消息，不能携带内部 cause；编码器仍负责码格式与 CRLF 校验。
 	RESPError() (code, message string)
 }
 
-// 公共错误协议是显式白名单；保留内部 cause 供 errors.Is/日志使用，却不直接发给客户端。
-// []byte 总按 bulk 长度编码，让零字节/CRLF 与状态行保持不同语义。
+// EncodeReply 将 result 或 execErr 编为一条 RESP 响应，返回字节及编码错误，不进行网络 I/O。
+// 业务错误仅通过 RESPError 白名单公开，内部错误用通用 ERR；错误码只允许大写字母，消息去 CRLF，cause 留供 errors.Is/As。
+// 支持 nil、[]byte、[][]byte、状态接口、true、int/int64；false、普通 string、非法状态或其他结果类型返回编码错误。二进制内容按长度编码。
 func EncodeReply(result any, execErr error) ([]byte, error) {
 	if execErr != nil {
 		var public publicError
@@ -57,6 +59,8 @@ func EncodeReply(result any, execErr error) ([]byte, error) {
 	}
 }
 
+// appendBulk 在 reply 尾部追加 value 的 bulk 长度头、原始二进制内容与 CRLF，返回扩展后的切片。
+// 不修改 value，但 append 可能复用/扩容 reply 底层数组；空 value 编为 $0，与 nil 结果的 $-1 语义不同。
 func appendBulk(reply, value []byte) []byte {
 	reply = append(reply, '$')
 	reply = strconv.AppendInt(reply, int64(len(value)), 10)
@@ -65,6 +69,8 @@ func appendBulk(reply, value []byte) []byte {
 	return append(reply, '\r', '\n')
 }
 
+// validErrorCode 检查 code 是否为非空的纯 ASCII 大写字母，返回能否安全用作公开 RESP 错误码。
+// 不修改输入；拒绝空白、数字、小写和换行，避免错误码把另一条协议帧注入回复。
 func validErrorCode(code string) bool {
 	if code == "" {
 		return false

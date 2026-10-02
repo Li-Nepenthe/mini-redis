@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// command 将 parts 文本转为 Engine 所需的 [][]byte 并返回，供单元测试快速构造命令。
+// 不检查参数合法性、不编码协议、不修改引擎；错误路径可以故意传空或非法参数。
 func command(parts ...string) [][]byte {
 	args := make([][]byte, len(parts))
 	for i := range parts {
@@ -16,6 +18,8 @@ func command(parts ...string) [][]byte {
 	return args
 }
 
+// requireExec 用 parts 执行 e，要求无错误且结果与 want 深度相等，由 t 记录失败，无返回值。
+// 设置 Helper 将失败定位到测试调用处；被执行命令可修改 Engine，但本辅助函数不额外操作状态。
 func requireExec(t *testing.T, e *Engine, want any, parts ...string) {
 	t.Helper()
 	got, err := e.Exec(command(parts...))
@@ -24,6 +28,8 @@ func requireExec(t *testing.T, e *Engine, want any, parts ...string) {
 	}
 }
 
+// TestCommandSequence 按顺序验证大小写命令、二进制 PING、String、List、重复 EXISTS/DEL 与缺失值返回类型。
+// t 比较业务结果而非 RESP 字节；List 最后一个元素弹出后 key 消失，编码另由 resp/tcp 测试覆盖。
 func TestCommandSequence(t *testing.T) {
 	e := NewEngine(16)
 	for _, test := range []struct {
@@ -51,6 +57,8 @@ func TestCommandSequence(t *testing.T) {
 	}
 }
 
+// TestCommandArgumentAndTypeErrors 表驱动验证未知命令、数量、整数溢出与 String/List 类型冲突。
+// t 使用 errors.Is 比较错误身份，避免仅比较错误文字；测试初始设置两种类型后执行非法命令，无独立网络 I/O。
 func TestCommandArgumentAndTypeErrors(t *testing.T) {
 	e := NewEngine(16)
 	requireExec(t, e, true, "SET", "string", "v")
@@ -83,6 +91,8 @@ func TestCommandArgumentAndTypeErrors(t *testing.T) {
 	}
 }
 
+// TestListRangeBoundaries 验证 LRANGE 的闭区间、负索引、越界裁剪、反向/空区间与 int64 极端索引。
+// t 对固定三元素 List 比较返回的二维字节数组，无返回值；未在此测大链表性能。
 func TestListRangeBoundaries(t *testing.T) {
 	e := NewEngine(16)
 	requireExec(t, e, 3, "LPUSH", "list", "a", "b", "c")
@@ -103,6 +113,8 @@ func TestListRangeBoundaries(t *testing.T) {
 	}
 }
 
+// TestEngineOwnsStoredAndReturnedBytes 在 SET/LPUSH 后修改原输入，再修改 GET/LRANGE 返回字节，验证存储不被别名污染。
+// t 随后再次读/弹出确认原值；测试调用结束后的所有权，不允许调用期间并发修改输入。
 func TestEngineOwnsStoredAndReturnedBytes(t *testing.T) {
 	e := NewEngine(16)
 	value := []byte("original")
@@ -124,6 +136,8 @@ func TestEngineOwnsStoredAndReturnedBytes(t *testing.T) {
 	requireExec(t, e, []byte("list"), "LPOP", "list")
 }
 
+// TestConcurrentListAndMultiKeyCommands 让 8 个 worker 同时 SET、EXISTS、反序 DEL 和共享 List LPUSH，检查 800 个元素不丢失。
+// t 等待所有 worker；可配合 race 检测共享访问，有限运行通过不等于证明所有时序永无死锁。
 func TestConcurrentListAndMultiKeyCommands(t *testing.T) {
 	e := NewEngine(16)
 	var workers sync.WaitGroup

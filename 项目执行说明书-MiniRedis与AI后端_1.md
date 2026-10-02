@@ -419,7 +419,7 @@ func FuzzParseStream(f *testing.F) {
 | 空文件 | 删除 `database/routine.go` |
 | 换行符 | `gofmt -w .`，新增 `.gitattributes` 写 `* text=auto eol=lf` |
 | 死代码 | 删除 `tcp/server.go` 开头 32 行注释块、`parser_test.go` 97—101 行 |
-| 学习笔记 | 从代码注释移至 `docs/notes.md`。代码注释只写为什么，不写是什么 |
+| 学习笔记 | 从代码注释移至 `docs/notes.md`。按使用者10/02最新要求：每包/每具名函数写用途、参数/结果、错误/副作用和必要WHY；长教程与完整参考答案放docs，不逐行冗余 |
 | 仓库元信息 | 补 description 与 topics |
 | `.gitignore` | 增加 `audit.sh`、`*-audit.txt`；删除 `.docx_qa_resignation/` |
 
@@ -829,6 +829,8 @@ type Provider interface {
 ---
 
 # §6 进度表
+
+**10/02最新教学修订备注**：根据使用者要求补齐P1全部包/具名函数契约，AST7包152函数、缺失0，接口11项缺失0；十章从零教程及32题完整答案/纠偏、覆盖矩阵与历史图标记已补，五个程序与本轮全量验证通过。独立审查及准确提交CI按最新notes/PR核验，个人口述仍待本人，P2继续暂停。
 
 当前2026-10-02用户要求：P2只收尾已实施小块后暂停，优先核验P1学习指导、设计/函数WHY与真实缺陷实验。此前“先完成工程再学习”的范围已收束。下面勾选只记录工程实证，口述/个人学习仍单独待答。完整映射见 docs/acceptance-matrix.md。
 

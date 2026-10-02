@@ -13,9 +13,13 @@ import (
 )
 
 type logFile interface {
+	// Writer 的 Write 允许短写/部分写伴错误，由 Store 循环或触发确认前缀回滚。
 	io.Writer
+	// Sync 返回 nil 才表示此轮同步成功；故障不能被缓存的成功状态掩盖。
 	Sync() error
+	// Truncate 将文件长度缩至确认前缀；失败由 Store.fail 合并并持续拒写。
 	Truncate(int64) error
+	// Close 释放文件句柄及系统独占锁，关闭错误必须传给上层。
 	Close() error
 }
 
@@ -28,8 +32,10 @@ type Store struct {
 	RecoveredTailBytes int64
 }
 
-// 文件句柄由 Open 在失败时回收，成功后交给 Store；独占锁防止第二个进程同时追加/截断。
-// 重放偏移取 Parser 实际消费量：bufio 会预读，重新编码又会改变合法的非规范数字头长度。
+// Open 创建或打开 path 指定的普通 AOF 文件、独占加锁，并依次把完整记录交给 replay 恢复内存。
+// ctx 用于取消恢复；replay 不能为 nil，必须能处理私有持久化命令。成功返回由调用者 Close 的 Store，失败返回错误并回收文件。
+// 仅 EOF/UnexpectedEOF 导致的不完整尾部会截到最后完整记录并 Sync；完整坏帧/回放错误保留文件并拒绝启动。
+// 偏移取 Parser 实际消费字节，不能用 bufio 预读游标或重新编码长度。失败前 replay 可能已改变内存，调用者应丢弃该恢复引擎。
 func Open(ctx context.Context, path string, replay func([][]byte) error) (store *Store, err error) {
 	if replay == nil {
 		return nil, errors.New("AOF replay callback is required")
@@ -58,6 +64,7 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 	}
 	parseCtx, cancel := context.WithCancel(ctx)
 	ch := resp.NewRespParser().ParseStream(parseCtx, file)
+	// 该收尾闭包在文件最终移交/回收前取消生产者并等待通道，防止回放提前报错留下 goroutine。
 	defer func() {
 		cancel()
 		if err != nil {
@@ -101,6 +108,8 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 	return &Store{file: file, size: offset, RecoveredTailBytes: recovered}, nil
 }
 
+// encodeRequest 把 args 的每个二进制参数编码为 RESP 数组中的 bulk，返回独立记录字节或边界错误。
+// 检查参数数目、单 bulk 与整条记录预算，不修改 args，也不写文件；不验证业务命令含义，业务校验由 Engine 完成。
 func encodeRequest(args [][]byte) ([]byte, error) {
 	if len(args) == 0 || len(args) > resp.MaxArrayLength {
 		return nil, errors.New("invalid AOF argument count")
@@ -122,8 +131,9 @@ func encodeRequest(args [][]byte) ([]byte, error) {
 	return data, nil
 }
 
-// size 只在完整写入且 Sync 成功后前移，作为“上次确认前缀”；不是文件当前可见长度。
-// 与 Close 同锁，防止关闭句柄或刷盘失败期间另一写入绕过确认边界。
+// Append 将 args 编码后完整写入 AOF 并 Sync；nil 表示该记录已经通过本次同步确认。
+// 与 Close 共用 Store.mu，size 仅在完整写入且同步成功后增加，表示上次确认前缀而非当前文件长度。
+// 关闭后返回 os.ErrClosed；已有存储失败持续返回原失败；编码错误不写文件。写入/同步失败触发尽力回滚并粘住失败状态。
 func (s *Store) Append(args [][]byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,6 +165,8 @@ func (s *Store) Append(args [][]byte) error {
 	return nil
 }
 
+// fail 在调用者持有 Store.mu 时处理 cause：尽力 Truncate 到确认的 size 并再次 Sync，保存合并错误并写内部日志。
+// 返回包含原始原因及回滚失败原因的错误；即使回滚成功也持续拒绝后续 Append，不能把一次存储故障掩盖为已自动恢复。
 func (s *Store) fail(cause error) error {
 	// 尽力回滚到上次确认的前缀；即使回滚成功也持续拒绝写入，避免掩盖存储故障。
 	truncateErr := s.file.Truncate(s.size)
@@ -164,6 +176,8 @@ func (s *Store) fail(cause error) error {
 	return s.failed
 }
 
+// Close 在 Store.mu 下将存储标记关闭、必要时 Sync 并关闭文件，返回持久化/关闭的合并错误。
+// 重复调用不再操作文件而返回已保存的错误；先前 Append 失败仍会关闭句柄并保留原因，不能用 Close 清除失败状态。
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

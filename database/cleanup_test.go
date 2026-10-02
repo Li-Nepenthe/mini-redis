@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// TestLargeExpirationReclaimsOutsideShardLocks 用可控时钟使阈值以上 key 过期，注入 reclaim 检查调用时所有分片锁都可获取。
+// t 等待回收信号再取消 worker 并等待退出；验证调用边界，不测 OS 工作集或真实 GC 耗时。
 func TestLargeExpirationReclaimsOutsideShardLocks(t *testing.T) {
 	engine, elapsed := clockEngine()
 	for i := 0; i < cleanupReclaimKeys+1; i++ {

@@ -17,6 +17,8 @@ type drainingParser struct {
 	once     sync.Once
 }
 
+// ParseStream 转发真实 Parser，并另启 goroutine 等 ctx 取消后用 Once 关闭 canceled 观察通道。
+// 返回真实 Payload 通道，r 的关闭仍由 Handler 所有；观察 goroutine 只通知停机门已触发，不代表 Parser 已结束。
 func (p *drainingParser) ParseStream(ctx context.Context, r io.Reader) <-chan *resp.Payload {
 	go func() { <-ctx.Done(); p.once.Do(func() { close(p.canceled) }) }()
 	return resp.NewRespParser().ParseStream(ctx, r)
@@ -28,6 +30,8 @@ type delayedExecutor struct {
 	calls   atomic.Int32
 }
 
+// Exec 增加 calls，首次关闭 started，然后等待 release 放行并返回 true、nil。
+// 忽略参数，专门制造执行中命令以测试停机；本身不响应 context，测试必须保证最终关闭 release。
 func (e *delayedExecutor) Exec([][]byte) (any, error) {
 	if e.calls.Add(1) == 1 {
 		close(e.started)
@@ -36,6 +40,8 @@ func (e *delayedExecutor) Exec([][]byte) (any, error) {
 	return true, nil
 }
 
+// TestShutdownDrainsInFlightReplyAndRejectsPipeline 发送两条粘连请求，在第一条执行中停机，再释放执行器。
+// t 验证 listener 关闭、只完成第一回复、第二命令不执行、连接 EOF 与 Serve/Shutdown 都结束；用专用通道确定时序。
 func TestShutdownDrainsInFlightReplyAndRejectsPipeline(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

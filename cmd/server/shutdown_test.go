@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+// TestRunShutdownFlushesAndReleasesAOF 通过真实 TCP 确认 SET，再取消服务，检查有界样本退出、AOF 锁释放及重开恢复值。
+// t 管理自己的连接/临时文件，包含 idle 连接、清理与文件关闭的集成路径；不保证任意慢磁盘/执行器都在 3 秒内完成。
 func TestRunShutdownFlushesAndReleasesAOF(t *testing.T) {
 	reservation, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -25,11 +25,15 @@ const (
 	MaxRequestLength = 32 << 20
 )
 
+// NewRespParser 返回无共享可变状态的 RESP 请求解析器，不读取输入或启动 goroutine。
+// 实际解析与通道生命周期在每次 ParseStream 调用中独立创建，同一实例可为不同连接提供解析。
 func NewRespParser() *Parser {
 	return &Parser{}
 }
 
-// context 只能取消 channel 发送；阻塞在 Read 时，所有者还必须关闭 reader（如连接）。
+// ParseStream 为 reader 启动一个解析 goroutine，返回只读 Payload 通道，依次提供完整参数或一次解析错误后关闭通道。
+// 干净 EOF 不发错误；Payload.BytesRead 仅完整成功帧有效，用于真实 AOF 偏移。生产者负责关闭 channel，消费者不可关闭它。
+// ctx 可停止循环/解除 channel 发送阻塞，但不能打断任意 reader.Read；所有者必须关闭阻塞 reader 并等待通道关闭。
 func (p *Parser) ParseStream(ctx context.Context, reader io.Reader) <-chan *Payload {
 	channel := make(chan *Payload)
 	go func() {
@@ -54,6 +58,9 @@ func (p *Parser) ParseStream(ctx context.Context, reader io.Reader) <-chan *Payl
 	return channel
 }
 
+// readHeader 从 bufio reader 读取一个带 CRLF 的长度头，返回去掉 CRLF 的字节或格式/长度/读取错误。
+// 头预算含 CRLF；完全无字节 EOF 返回 io.EOF，残头则包装 EOF 供 AOF 判半尾。返回切片借用 reader 缓冲，须在下次读取前处理。
+// ReadSlice 使用固定缓冲避免恶意无换行输入无限扩容，不把内容段中的 CRLF 当作 bulk 边界。
 func readHeader(reader *bufio.Reader) ([]byte, error) {
 	// ReadBytes 会随恶意无换行输入扩容；固定缓冲的 ReadSlice 能在达到上限时停止。
 	line, err := reader.ReadSlice('\n')
@@ -72,8 +79,9 @@ func readHeader(reader *bufio.Reader) ([]byte, error) {
 	return line[:len(line)-2], nil
 }
 
-// 只让合法的数组/bulk 帧进入业务层；业务参数错误交给 Exec。
-// io.ReadFull 按协议长度凑齐内容，不把一次 TCP Read 的大小误当成命令边界。
+// readRequest 按数组→bulk 长度→精确内容→CRLF 读取一条请求，返回参数、实际完整帧字节数及错误。
+// ctx 在逐参数阶段检查；失败返回 nil、0、错误，开头干净 EOF 单独返回。允许空数组，但业务上是否忽略由 Handler 决定。
+// 分配前检查 1024 参数、16MiB 单 bulk、64 字节头和 32MiB 整帧预算；ReadFull 可跨 TCP 半包，bufio 保留后续粘连帧。
 func readRequest(ctx context.Context, reader *bufio.Reader) ([][]byte, int, error) {
 	line, err := readHeader(reader)
 	if err != nil {
