@@ -39,7 +39,7 @@
 | M2.3 | InvalidRequest/RateLimited/Timeout/ProviderUnavailable/StreamInterrupted | Provider部分本地回归与TLS超时独立复现；无业务生成端点 | 局部通过·暂停 |
 | M2.4 | 只重试 429（Retry-After）及确定 5xx；不重试参数/认证/已发 token/取消 | Provider本地计数/Retry-After/取消/中断/重定向/网络不确定回归 | 局部通过·暂停 |
 | M2.5 | 消息与 usage 落库；5 秒 context 对 10 秒上游约 5 秒取消 | 事务/超时实测、API 日志 | 未实施·暂停 |
-| M2.6 | go test 只 Mock/本地假上游，无付费请求；真实模型联调 | 离线测试；真实 API 地址/key/预算未提供 | 未运行·暂停 |
+| M2.6 | go test 只 Mock/本地假上游，无付费请求；真实模型联调 | Provider离线已验；真实模型未运行，无费用 | 局部通过·联调暂停 |
 | M3.1 | Cache-Aside exact hash(model+prompt+params)、输入校验/负缓存、TTL jitter | 缓存 key/TTL/错误测试 | 未实施·暂停 |
 | M3.2 | singleflight；50 同问模型只调用 1 次；二次问由秒→毫秒 | 并发计数/真实 Mock 延时测量 | 未实施·暂停 |
 | M3.3 | 预估 quota→实际 token 结算→超额拒绝；quota100 第二次拒绝 | 真实 MySQL/Redis 并发/结算 | 未实施·暂停 |

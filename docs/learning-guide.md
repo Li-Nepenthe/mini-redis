@@ -28,10 +28,15 @@
 | context | 协作取消/截止信号，不会自动杀goroutine或打断任意Reader |
 | Mutex / RWMutex | 互斥锁/读写锁；保护共享状态，多个读者可并行、写者独占 |
 | defer / 闭包 | 返回时清理（后注册先执行）/捕获外层状态的函数 |
+| interface / any | 接口规定方法；any是可容纳任意Go值的空接口，读取时仍须检查实际类型 |
+| 类型断言 | `value, ok := raw.([]byte)`检查接口内是否是该类型，不是自动转换；失败ok=false |
+| WaitGroup / Once | Add登记、Done完成、Wait等计数归零 / Do只执行一次动作，不会自动关闭资源 |
 | TTL / 期限 | 剩余生存时间/绝对到期时刻；重启不能把两者混用 |
 | AOF / 重放 | 追加写操作日志/启动时依次应用日志恢复状态 |
 | fsync（Sync） | 请求操作系统同步文件；成功才越过本项目的持久化确认边界 |
 | GC / 工作集 | Go垃圾回收/Windows进程当前驻留物理内存；不是同一指标 |
+
+Go接口按方法集隐式满足，不写Java式implements。`CommandExecutor`要求`Exec([][]byte) (any, error)`，`*Engine`有这个方法就能交给Handler；测试可传慢执行器而不用复制业务。`map[string]any`让同一存储容纳String的`[]byte`和List的`*LinkedList`，GET通过带ok的类型断言区分；存在却不是String返回WRONGTYPE，不是把List硬转换成字节。无ok的错误断言会panic。`func (e *Engine) Exec…`里的e是方法接收者，表示它操作哪一个Engine实例。
 
 ## 2. 每次只学习当前一轮
 
@@ -159,7 +164,7 @@ GET支路：`Exec → get → lockRead → 查询/类型校验/复制 → RUnloc
 | Engine.Exec，engine.go | 参数→any,error | 分发，不统一给所有命令加一把锁 | 协议/业务/持久化可各自验证 |
 | lockKeys，engine.go | keys、write→unlock闭包 | 去重排序，返回时仍持锁，调用者defer | 相反参数顺序不能形成锁环 |
 | get/lrange，engine.go | 参数→复制值/error | lockRead返回RLock，复制完再解锁 | 返回结果不共享内部可变字节 |
-| LinkedList.LPush/LPop，engine.go | 字节/无输入→弹出值等 | 自身无锁，由shard写锁保护；LPush复制 | 原子性在命令边界，避免两套锁 |
+| LinkedList.LPush/LPop，engine.go | 字节→无返回 / 无输入→(字节,bool) | 自身无锁，由shard写锁保护；LPush复制 | 原子性在命令边界，避免两套锁 |
 | lockRead，ttl.go | key→shard、now | 返回持RLock；过期先放读锁再写锁重检 | RWMutex不能升级，窗口内可能续期 |
 | setExpiration/clearExpiration，ttl.go | key、期限/key→无返回 | 调用者持写锁，同步expires/expiring/index | O(1)抽样/删除，续期不重复入池 |
 | RunCleanup/cleanupExpired，ttl.go | ctx/无输入→退出/删除数 | 一个worker，每shard最多256检查，回收在锁外 | 清冷数据但不长时间霸占请求锁 |
@@ -354,6 +359,25 @@ Store.size只在Write+Sync成功后增加。fail尽力Truncate+Sync回到旧size
 
 每写Sync降低确认写的崩溃窗口，却有磁盘与持锁成本。周期fsync可增吞吐，但必须改变确认窗口、缓冲/关闭约束；这里只实现一种。依赖OS/存储正确履行同步，不承诺所有硬件断电场景。
 
+### 错误文本不是错误身份
+
+cause是底层原因，commandError.Unwrap返回它；`fmt.Errorf("位置: %w", err)`用%w保留可遍历的原因链，%v只有文本。errors.Is沿链判断是否匹配某个错误值（也支持错误自定义匹配），不是比较Error()字符串；errors.As沿链找到指定类型/接口，取出它用于处理。内部原因可识别，与是否公开给客户端是两项设计。
+
+下面是调用片段，放入Go程序时需导入errors、fmt及仓库database/resp包；不是新的服务功能：
+
+```go
+e := database.NewEngine(16)
+_, err := e.Exec([][]byte{[]byte("SET"), []byte("k")}) // 缺少value
+wrapped := fmt.Errorf("request failed: %w", err)
+fmt.Println(errors.Is(wrapped, database.ErrWrongArgsNum)) // true
+var public interface{ RESPError() (string, string) }
+fmt.Println(errors.As(wrapped, &public)) // true，找到公开错误接口
+reply, _ := resp.EncodeReply(nil, wrapped)
+fmt.Printf("%q\n", reply) // "-ERR wrong number of arguments for 'set' command\r\n"
+```
+
+这里wrongArgs保留ErrWrongArgsNum作cause；EncodeReply使用As识别公开RESPError，输出不会含“request failed”或底层路径。随便errors.New同样的文字不具有这个哨兵错误身份；直接输出err.Error既不提供可靠分类，又可能泄漏内部链。
+
 ### 8.2 半尾与完整坏记录不能一视同仁
 
 Open按Payload.BytesRead累计最后完整偏移。bufio会预读，file当前游标不等于已重放位置；合法`$03`与重新编码`$3`长度不同，也不能替代真实偏移。
@@ -419,6 +443,8 @@ Start-Sleep -Seconds 11
 ## 9. 谁启动 goroutine，谁必须等待它退出
 
 [CancelFunc官方说明](https://pkg.go.dev/context#CancelFunc)明确取消不等于等待工作停止。连接ctx来自Handler自管父ctx；主程序信号触发Server.Shutdown→Handler.cancel，清理worker直接用run的ctx，不是一个ctx自动停止全部对象。
+
+WaitGroup像“未完成任务计数器”：Add(1)在启动前登记，goroutine结束时Done减一，Wait等到零；它不会替你cancel或Close。sync.Once.Do使一段关闭/等待启动动作只执行一次，避免并发Close重复关done channel；它也不负责资源回收或失败重试。代码仍须正确排序实际关闭与等待。
 
 | 资源 | 启动/获得者 | 停止动作 | 结束证明 |
 |---|---|---|---|

@@ -560,3 +560,9 @@ gofmt -l .
 原样提取指南Python+PowerShell独立内存实验，只有将临时Python文件路径换为实际任务文件：10万个256-byte、TTL5秒、无AOF、同一自有PID、不后续GET/外部GC；写入3.539秒，工作集88,051,712→28,491,776 bytes（15秒）→28,475,392（30秒），exit0。峰值88,055,808保持不变，验证“峰值不等于当前使用”；原始输出p1-learning-memory-experiment.txt。完整P1回归与此实验同机并行，这是可复现的内存样本，不是吞吐/P99对照。按明确持有的Process对象只停止实验PID，不碰其他服务；强制清理不算优雅停机验收。
 
 指南单独存Library时也可直接打开main源码链接，文档ZIP不需要伪装携带源码。独立教学完整性与技术准确性复核、准确文档提交CI/合并结果随后以实际检查与交付记录为准，本节记录提交前本机检查，不预填远端通过。description/topics仍因连接无写入口且computer-use必要guidance/node_repl缺失待补；没有读凭据绕过权限。个人六轮检查点、S6七项、3/15分钟口述和第二层追问仍本人待答。材料完善不等于个人封版，也不恢复P2功能推进。
+
+### 教学独立复核的最小补充
+
+独立只读审查14d27ba对照Engine/TTL/Persistence/Parser/Reply/Handler/TCP/Main/AOF，确认技术准确、锁/所有权/实验与阶段边界正确，8个Go文件仅25行注释；原样内存/本机race证据一致。补齐三项Go初学者前置：interface/any/类型断言与Engine→CommandExecutor；WaitGroup Add/Done/Wait、Once；cause/Unwrap/%w、errors.Is/As与错误文本身份。指南成为557行；普通命令/链接再次核对，新增错误短例提取编译运行：true、true和公开ERR，见p1-learning-error-example.txt。修订只涉及文档，没有应用功能/新负载测试。
+
+14d27ba的CI37000318453两模块全部步骤success；该证据只属于初稿。最终修订的独立复核与准确HEAD CI在PR #3检查，必须实际返回才合并，不以初稿绿灯代替。个人脱稿/口述仍待自己完成；从指南第一轮开始，不安排P2下一功能。
