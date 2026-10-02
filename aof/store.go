@@ -28,6 +28,8 @@ type Store struct {
 	RecoveredTailBytes int64
 }
 
+// 文件句柄由 Open 在失败时回收，成功后交给 Store；独占锁防止第二个进程同时追加/截断。
+// 重放偏移取 Parser 实际消费量：bufio 会预读，重新编码又会改变合法的非规范数字头长度。
 func Open(ctx context.Context, path string, replay func([][]byte) error) (store *Store, err error) {
 	if replay == nil {
 		return nil, errors.New("AOF replay callback is required")
@@ -120,6 +122,8 @@ func encodeRequest(args [][]byte) ([]byte, error) {
 	return data, nil
 }
 
+// size 只在完整写入且 Sync 成功后前移，作为“上次确认前缀”；不是文件当前可见长度。
+// 与 Close 同锁，防止关闭句柄或刷盘失败期间另一写入绕过确认边界。
 func (s *Store) Append(args [][]byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

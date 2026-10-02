@@ -67,6 +67,8 @@ func run(ctx context.Context, addr, aofPath string) (runErr error) {
 		defer close(cleanupDone)
 		dbEngine.RunCleanup(ctx)
 	}()
+	// defer 后注册先执行：先 cancel+等待清理，再执行前面注册的 Store.Close。
+	// 生命周期由启动者收束，不能把“发出了取消”当成“后台已经退出”。
 	defer func() {
 		cancel()
 		<-cleanupDone

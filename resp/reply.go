@@ -11,6 +11,8 @@ type publicError interface {
 	RESPError() (code, message string)
 }
 
+// 公共错误协议是显式白名单；保留内部 cause 供 errors.Is/日志使用，却不直接发给客户端。
+// []byte 总按 bulk 长度编码，让零字节/CRLF 与状态行保持不同语义。
 func EncodeReply(result any, execErr error) ([]byte, error) {
 	if execErr != nil {
 		var public publicError

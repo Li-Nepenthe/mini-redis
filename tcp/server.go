@@ -82,6 +82,7 @@ func (s *Server) Serve(listener net.Listener) (serveErr error) {
 			_ = conn.Close()
 			return nil
 		}
+		// 与 closed 同锁登记，避免 Shutdown 开始 Wait 后还加入新连接。
 		s.wg.Add(1)
 		s.mu.Unlock()
 		go func() { defer s.wg.Done(); s.Handler.Handle(conn) }()

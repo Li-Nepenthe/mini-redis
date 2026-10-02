@@ -20,6 +20,7 @@ const (
 	cleanupReclaimInterval = 5 * time.Second
 )
 
+// 调用者持 shard 写锁。续期保留索引，避免同一个 key 在抽样池里重复占位。
 func (s *shard) setExpiration(key string, deadline time.Time) {
 	if old, ok := s.expires[key]; ok {
 		old.deadline = deadline
@@ -30,6 +31,8 @@ func (s *shard) setExpiration(key string, deadline time.Time) {
 	s.expiring = append(s.expiring, key)
 }
 
+// 抽样池不要求顺序；用末项补洞并修正反向索引，删除为 O(1)。
+// 清空旧末项的字符串，避免切片底层数组继续保留已删除 key 的引用；调用者持写锁。
 func (s *shard) clearExpiration(key string) {
 	old, ok := s.expires[key]
 	if !ok {
@@ -59,6 +62,7 @@ func (s *shard) purgeExpired(key string, now time.Time) bool {
 }
 
 // RWMutex 不能原地升级；释放读锁后加写锁并重新检查，避免误删并发续期的新值。
+// 成功返回时仍持 RLock，调用者必须 RUnlock；重试是为了在删/续期后读取新的状态。
 func (e *Engine) lockRead(key string) (*shard, time.Time) {
 	s := e.getShard(key)
 	for {

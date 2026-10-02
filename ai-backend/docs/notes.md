@@ -37,3 +37,12 @@ CI配置在独立ai-backend job提供MySQL服务、模块工作目录与go.sum�
 ### M1独立审查修复：MySQL会话时区
 
 审查指出mysql-driver loc只解码、不设置服务端会话。已在自有测试库专用单连接设session+08:00实证：改名UpdatedAt被解码为UTC18:21，实际UTC10:21，偏移约8小时；失败日志保留p2-m1-timezone-before-fix.txt。未改global/系统/用户DB。修复为新连接显式time_zone=+00:00、改名updated_at使用Go UTC参数；专用session+08下更新仍正确，新连接即使DSN携带+08仍按UTC建立。补两项真实MySQL回归，当前全量race/真实DB、vet、Staticcheck、build、格式通过；最终证据仍为p2-m1-final-checks.json及对应日志，替代修复前的同名final记录。原审查HEAD a19bd92的其他M1功能/范围与离线race均通过；修复commit需再次审查并观察准确HEAD CI。
+
+
+## 2026-10-02 · 当前授权收束与暂停状态
+
+此前 M1–M5 实施授权与“下一项”保留作历史记录，用户最新要求取代它：只收尾当前 P2 小块后停止，转向第一阶段学习指导。M1 修复提交8397f97独立复审及CI36995249329全成功，PR #2合并ef8817dd263435beee3f023acdb11db8307b74d8；main CI36996394132两模块所有步骤success。
+
+现有Provider小块保存于本地codex/ai-backend-m2-m3-20261002@5a973b71f3c215558331eb3a4d5ba309fa534488，未推送/合并。Mock/兼容HTTP Generate/Stream、有限重试/取消/有界流读取及本地假上游回归经过race/vet/Staticcheck/build/格式检查。独立审查发现SSE显式error仍Done、TLS握手超时分类错误，最小修复后准确提交独立全量Provider race+两项真实复现1.760s通过。原始失败与复验副本在任务work/p2-provider-independent-*，本机日志work/validation/p2-provider-*。删除自己未提交的Embedding/来源/额度预留准备，不开始新阶段。
+
+Stream仅上游适配器，不是业务SSE服务；消息/usage落库、聊天页面、M3–M5未实施且暂停，真实模型调用/质量/费用未运行。自有MySQL容器按唯一所有者标签删除，仅清理本次fixture，Docker引擎/官方镜像保留。分支名不表示M3已实施；恢复需用户新指令。P1指南与WHY注释的验收见根docs/notes.md。
