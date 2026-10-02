@@ -72,6 +72,8 @@ func readHeader(reader *bufio.Reader) ([]byte, error) {
 	return line[:len(line)-2], nil
 }
 
+// 只让合法的数组/bulk 帧进入业务层；业务参数错误交给 Exec。
+// io.ReadFull 按协议长度凑齐内容，不把一次 TCP Read 的大小误当成命令边界。
 func readRequest(ctx context.Context, reader *bufio.Reader) ([][]byte, int, error) {
 	line, err := readHeader(reader)
 	if err != nil {

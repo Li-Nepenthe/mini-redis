@@ -31,6 +31,8 @@ type StatusReply string
 
 func (s StatusReply) RESPStatus() string { return string(s) }
 
+// 路由使用 hash & (N-1)，只有 N 为 2 的幂才能覆盖全部分片；拒绝非法配置，
+// 避免看似有 N 个锁却只有一部分真正分担请求。16 是默认值，不是最优值保证。
 func NewEngine(shardCount uint32) *Engine {
 	if shardCount == 0 || shardCount&(shardCount-1) != 0 {
 		panic("shardCount must be a power of 2")
@@ -42,6 +44,7 @@ func NewEngine(shardCount uint32) *Engine {
 	return e
 }
 
+// 使用 FNV-1 的先乘后异或顺序；散列只负责稳定路由，不提供安全性或热点均摊保证。
 func fnv32(key string) uint32 {
 	hash := uint32(2166136261)
 	for i := 0; i < len(key); i++ {
@@ -56,6 +59,7 @@ func (e *Engine) getShard(key string) *shard {
 }
 
 // 多 key 按固定分片顺序加锁，避免另一连接用相反参数顺序时形成死锁。
+// 同一分片必须去重：RWMutex 不是可重入锁。返回的闭包由调用者 defer，锁覆盖整个命令。
 func (e *Engine) lockKeys(keys [][]byte, write bool) func() {
 	seen := make(map[int]bool, len(keys))
 	indices := make([]int, 0, len(keys))
@@ -90,6 +94,7 @@ type Node struct {
 	prev, next *Node
 }
 
+// List 自身不加锁，由所属 shard 保护；否则同时维护两套锁顺序会让命令原子性更难判断。
 type LinkedList struct {
 	head, tail *Node
 	len        int

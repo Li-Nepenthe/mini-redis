@@ -531,3 +531,32 @@ main push的CI36991251698/job110787739322全部success（格式/full race/vet/St
 S6 description/topics仍空。GitHub连接工具没有元信息写接口；computer-use SKILL要求先读核心guidance再控制UI，但当前委派环境取不到这些资源且没有node_repl，故该窄项保留待补，已向父会话报出；没有读取凭据绕过连接权限。本人学习问答仍不代签，P1工程就绪不等于所有封版条件已打勾。
 
 已从main在任务work/mini-redis-p2建独立分支codex/ai-backend-p2-20261002，M1使用Gin/手写SQL/MySQL/bcrypt/AccessToken/owner鉴权，真实MySQL8.4.11的事务回滚、密码散列、分页不重、跨用户403、全量race和curl实际进程验收通过；索引三条实际EXPLAIN与对照rows有数据。细节/WHY/命令/剩余项在ai-backend/README.md、docs/notes.md、docs/explain.md及根验收矩阵。P1核心Go文件未因P2修改。
+
+
+## 2026-10-02 · P2 当前小块收尾，P1 学习意义/WHY 复核
+
+本段为当前范围，之前“下一项”是历史记录。用户最新要求P2只完成当前小块后停止，继续核验P1学习指导，特别是设计/函数为什么这样做及学习意义。M1修复8397f97独立复审+CI36995249329全成功，PR #2合并ef8817dd263435beee3f023acdb11db8307b74d8，main CI36996394132两模块全成功。原目录main快进保留已有文件；未回退/覆盖.idea或其他工作。
+
+Provider只收尾已写的Generate/Stream、Mock/HTTP adapter及本地回归，保存本地codex/ai-backend-m2-m3-20261002@5a973b71f3c215558331eb3a4d5ba309fa534488。独立复审复现显式SSE error仍Done、TLS握手Timeout分类错误，两项最小修复后准确提交独立Provider race+真实TLS/SSE回归1.760s通过。完整本机Provider race1.674s、vet/Staticcheck/build/格式通过；未推送/合并此块，无生成业务端点/落库/页面，M2整阶段未完成，M3–M5暂停。自己未提交的Embedding/检索/额度准备已移除；自有MySQL容器按所有者标签清理，无模型费用，无其他数据库操作。
+
+### 本轮教学改动和原因
+
+新工作树任务work/mini-redis-p1-learning、分支codex/p1-learning-why-20261002、基线main ef8817d。docs/learning-guide.md重写为渐进六轮：命令→字节与调用链→函数契约/锁/所有权→TTL→AOF→生命周期/验证。每个关键函数明确输入输出、返回时是否持锁、状态/资源归属和失败路径；WHY附错误后果与替代取舍，不让初学者只背函数名。AOF历史续期丢值/到期List复活/过期后重建边界，以及删除引用却工作集不降，作为可重现实例。加入术语、实验预期、第二层自查提示与三分钟/十五分钟口述路线。
+
+8个P1 Go文件共25行设计注释：掩码构造/FNV-1、锁排序去重/锁外所有权、prepare/apply与日志锁顺序、TTL索引/读锁返回契约、Parser按长度读取、公开错误、AOF确认前缀/真实偏移、WaitGroup登记门和defer等待顺序；没有应用行为改变。保持说明书“代码只写为什么，完整讲解在文档”的原则，不逐行冗余注释。README、验收矩阵、P2 README/记录与原说明书§6更新当前暂停状态，不修改原功能/验收要求或替本人答题。
+
+### 可执行命令与已发生结果
+
+```powershell
+go test -race ./... -count=1 -timeout=180s
+go vet ./...
+staticcheck ./...
+go build ./...
+gofmt -l .
+```
+
+当前P1全部通过，无DATA RACE，格式输出为空；记录work/validation/p1-learning-{race,vet,staticcheck,build,format}.txt及p1-learning-checks.json。使用Go1.27.1、已有便携GCC、Staticcheck0.8.1，仅进程环境，不改系统配置。指南全部普通test命令匹配实际当前测试名，源码链接定位存在，Go diff逐项确认仅注释；材料receipt为p1-learning-material-checks.json。Fuzz/性能代码未改，不重复10分钟Fuzz/九格或把旧数字冒作本轮重测。
+
+原样提取指南Python+PowerShell独立内存实验，只有将临时Python文件路径换为实际任务文件：10万个256-byte、TTL5秒、无AOF、同一自有PID、不后续GET/外部GC；写入3.539秒，工作集88,051,712→28,491,776 bytes（15秒）→28,475,392（30秒），exit0。峰值88,055,808保持不变，验证“峰值不等于当前使用”；原始输出p1-learning-memory-experiment.txt。完整P1回归与此实验同机并行，这是可复现的内存样本，不是吞吐/P99对照。按明确持有的Process对象只停止实验PID，不碰其他服务；强制清理不算优雅停机验收。
+
+指南单独存Library时也可直接打开main源码链接，文档ZIP不需要伪装携带源码。独立教学完整性与技术准确性复核、准确文档提交CI/合并结果随后以实际检查与交付记录为准，本节记录提交前本机检查，不预填远端通过。description/topics仍因连接无写入口且computer-use必要guidance/node_repl缺失待补；没有读凭据绕过权限。个人六轮检查点、S6七项、3/15分钟口述和第二层追问仍本人待答。材料完善不等于个人封版，也不恢复P2功能推进。

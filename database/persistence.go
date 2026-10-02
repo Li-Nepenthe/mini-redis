@@ -16,6 +16,8 @@ type CommandLog interface {
 // 仅启动时重放后、启动 worker 前绑定，避免重放再追加和并发更换日志。
 func (e *Engine) AttachLog(log CommandLog) { e.log = log }
 
+// AOF 模式按 logMu → 有序 shard 锁 → Store.mu 获取锁，保证内存提交与日志顺序相同。
+// 读者只用 shard 锁，因而同分片读也会等待 fsync；这是确认语义的明确代价。
 func (e *Engine) executeWrite(args [][]byte, cmd string) (any, error) {
 	if e.log != nil {
 		e.logMu.Lock()
@@ -39,6 +41,9 @@ func (e *Engine) executeWrite(args [][]byte, cmd string) (any, error) {
 	return result, nil
 }
 
+// 把“检查并准备”与“修改业务值”分开：Append/Sync 失败时不调用 apply。
+// apply 捕获的 List/状态必须在同一批 shard 锁内使用；即使返回错误，调用者也要执行 unlock。
+// replay 跳过当前时间的惰性过期，否则历史中后续的续期/追加会基于被提前删除的状态执行。
 func (e *Engine) prepareWrite(args [][]byte, cmd string, replay bool) (result any, record [][]byte, apply func(), unlock func(), err error) {
 	valid := len(args) == 3
 	switch cmd {

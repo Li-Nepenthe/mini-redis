@@ -1,6 +1,6 @@
 # AI 文档问答后端（P2）
 
-说明书 P2 的独立 Go module，与 P1 Mini-Redis 同仓。当前 M1 注册/登录、会话 CRUD/分页、资源鉴权、手写 MySQL SQL/迁移已实现；M2–M5 继续按根目录 [验收矩阵](../docs/acceptance-matrix.md) 推进。个人学习口述、真实模型质量/付费费用不能由代理或 Mock 代签。
+说明书 P2 的独立 Go module，与 P1 Mini-Redis 同仓。当前 M1 注册/登录、会话 CRUD/分页、资源鉴权、手写 MySQL SQL/迁移已实现；M1 已独立复审通过并合并（PR #2，main@ef8817d），main 两模块 CI 通过。用户于 2026-10-02 要求暂停 P2；Provider 小块仅在本地分支保存，尚未接业务 API；M2 整体未完成，M3–M5 未实施且暂停。当前优先学习 P1，逐项状态见根 [验收矩阵](../docs/acceptance-matrix.md)。个人学习口述、真实模型质量/付费费用不能由代理或 Mock 代签。
 
 ## M1 启动
 
@@ -74,4 +74,7 @@ go build ./...
 
 ## 范围
 
-后续只有说明书中的一个兼容Provider+Mock、SSE、缓存/Redis Lua限流/额度幂等、Kafka异步文档与内存检索三路评测、Compose/Prometheus/压测。不用Kubernetes、ORM、RefreshToken、多Provider failover、gRPC/微服务、Workflow引擎、向量数据库、MCP、管理后台、长期记忆、死信/重试矩阵。PDF支持文本层的解析边界在M4实证后记录；不自动引入OCR。
+原说明书后续范围（当前暂停，未实施）为一个兼容Provider+Mock、SSE、缓存/Redis Lua限流/额度幂等、Kafka异步文档与内存检索三路评测、Compose/Prometheus/压测。不用Kubernetes、ORM、RefreshToken、多Provider failover、gRPC/微服务、Workflow引擎、向量数据库、MCP、管理后台、长期记忆、死信/重试矩阵。PDF支持文本层的解析边界在M4实证后记录；不自动引入OCR。
+
+
+暂停检查点：本地 codex/ai-backend-m2-m3-20261002@5a973b7 的 Provider Generate/Stream、Mock/HTTP adapter 和回归通过独立复核；分支名保留历史，不代表 M3 已开始。适配器没有推送/合并，当前 main 无生成/SSE业务端点或聊天页面。使用/测试/WHY详见该本地分支 ai-backend/README.md 和 docs/notes.md。
