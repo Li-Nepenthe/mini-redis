@@ -36,7 +36,7 @@
 
 **mutex、RWMutex、WaitGroup、Once**：锁让多个任务访问同一状态时遵守互斥；RWMutex 允许多个读者，写者独占。它不能从持有读锁直接升级为写锁。WaitGroup 是未完成任务计数器：启动前 Add，完成 Done，Wait 等到零；不自动取消。Once 只执行一次关闭流程，不会自动释放资源或重试失败。具体锁规则见 [官方 RWMutex](https://pkg.go.dev/sync#RWMutex)。
 
-**闭包与 defer**：`prepareWrite` 返回的 apply 捕获 List/分片状态，只有调用它才修改业务值。`defer unlock()` 推迟释放锁，不是马上解锁；同函数多个 defer 后注册先执行。`run` 借此先取消并等待清理，再关日志。
+**闭包与 defer**：`prepareWrite` 返回的 apply 捕获 List/分片状态，新业务写入只在调用它后提交；prepare 本身仍可惰性删除过期旧值。`defer unlock()` 推迟释放锁，不是马上解锁；同函数多个 defer 后注册先执行。`run` 借此先取消并等待清理，再关日志。
 
 **阻塞、短读、短写、EOF**：阻塞是等待条件；一次 Read 可只给半段，一次 Write 也可能没写完。EOF 在没有新帧字节时表示干净结束；一帧写到一半断开是错误。`io.ReadFull` 才按指定长度读满或报不足，见 [官方 ReadFull](https://pkg.go.dev/io#ReadFull)。
 

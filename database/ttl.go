@@ -66,7 +66,8 @@ func (s *shard) purgeExpired(key string, now time.Time) bool {
 
 // lockRead 为 key 获取可读取当前状态的分片，返回 shard 和本轮 now；返回时仍持该 shard 的 RLock，调用者须 RUnlock。
 // 遇到过期值时先放读锁，再加写锁按新时间重新检查并删除，然后重试；RWMutex 不可原地升级。
-// 重查保护并发续期，不能拿旧快照在释放读锁后直接删除新值；该函数可能产生 TTL 清理副作用。
+// 间隙内其他写者可能 SET 重建同名值并设置新期限，重查避免用旧快照删除新状态；普通 EXPIRE 不会续活已过期旧值。
+// 该函数可能产生 TTL 清理副作用。
 func (e *Engine) lockRead(key string) (*shard, time.Time) {
 	s := e.getShard(key)
 	for {

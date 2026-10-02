@@ -55,10 +55,10 @@ P1 Git清单中没有vendor第三方源码或带Go生成标记的文件，故这
 | [aof/lock_linux.go:10](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/lock_linux.go#L10) | lockFile | lockFile 对已打开的 file 获取 Linux 非阻塞独占 flock，返回系统锁错误或 nil。 |
 | [aof/lock_windows.go:13](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/lock_windows.go#L13) | lockFile | lockFile 对已打开的 file 调用 Windows LockFileEx，非阻塞地独占整段文件范围。 |
 | [aof/store.go:39](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L39) | Open | Open 创建或打开 path 指定的普通 AOF 文件、独占加锁，并依次把完整记录交给 replay 恢复内存。 |
-| [aof/store.go:113](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L113) | encodeRequest | encodeRequest 把 args 的每个二进制参数编码为 RESP 数组中的 bulk，返回独立记录字节或边界错误。 |
-| [aof/store.go:137](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L137) | *Store.Append | Append 将 args 编码后完整写入 AOF 并 Sync；nil 表示该记录已经通过本次同步确认。 |
-| [aof/store.go:170](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L170) | *Store.fail | fail 在调用者持有 Store.mu 时处理 cause：尽力 Truncate 到确认的 size 并再次 Sync，保存合并错误并写内部日志。 |
-| [aof/store.go:181](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L181) | *Store.Close | Close 在 Store.mu 下将存储标记关闭、必要时 Sync 并关闭文件，返回持久化/关闭的合并错误。 |
+| [aof/store.go:114](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L114) | encodeRequest | encodeRequest 把 args 的每个二进制参数编码为 RESP 数组中的 bulk，返回独立记录字节或边界错误。 |
+| [aof/store.go:138](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L138) | *Store.Append | Append 将 args 编码后完整写入 AOF 并 Sync；nil 表示该记录已经通过本次同步确认。 |
+| [aof/store.go:171](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L171) | *Store.fail | fail 在调用者持有 Store.mu 时处理 cause：尽力 Truncate 到确认的 size 并再次 Sync，保存合并错误并写内部日志。 |
+| [aof/store.go:182](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store.go#L182) | *Store.Close | Close 在 Store.mu 下将存储标记关闭、必要时 Sync 并关闭文件，返回持久化/关闭的合并错误。 |
 | [aof/store_test.go:24](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store_test.go#L24) | args | args 将 parts 的每个字符串转为独立字节参数并返回二维切片，便于测试直接调用 Engine/Store。 |
 | [aof/store_test.go:34](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store_test.go#L34) | execute | execute 用 parts 执行 engine 命令，并由 t 检查无错误且结果与 want 深度相等，无返回值。 |
 | [aof/store_test.go:44](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store_test.go#L44) | openEngine | openEngine 为 path 创建 16 分片引擎、通过 Replay 恢复并绑定 Store，返回引擎与日志。 |
@@ -76,7 +76,7 @@ P1 Git清单中没有vendor第三方源码或带Go生成标记的文件，故这
 | [aof/store_test.go:258](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store_test.go#L258) | TestWriteAndSyncFailuresAreSticky | TestWriteAndSyncFailuresAreSticky 分别注入部分写和同步失败，验证回滚到 size、后续拒写及 Close 保留原 cause。 |
 | [aof/store_test.go:280](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store_test.go#L280) | TestCrashProcessHelper | TestCrashProcessHelper 仅在 MINIREDIS_AOF_CHILD=1 的自有子进程中写 1000 条并输出 READY，然后保持运行等待父测试强杀。 |
 | [aof/store_test.go:303](https://github.com/Li-Nepenthe/mini-redis/blob/main/aof/store_test.go#L303) | TestThousandWritesSurviveForcedProcessTermination | TestThousandWritesSurviveForcedProcessTermination 启动本测试二进制的专用助手，等待 READY 后只强杀该子进程。 |
-| [cmd/client/main.go:17](https://github.com/Li-Nepenthe/mini-redis/blob/main/cmd/client/main.go#L17) | main | main 启动教学交互客户端，连接固定的 127.0.0.1:6379，将标准输入按空白拆词并编码为 RESP 请求。 |
+| [cmd/client/main.go:18](https://github.com/Li-Nepenthe/mini-redis/blob/main/cmd/client/main.go#L18) | main | main 启动教学交互客户端，连接固定的 127.0.0.1:6379，将标准输入按空白拆词并编码为 RESP 请求。 |
 | [cmd/server/main.go:23](https://github.com/Li-Nepenthe/mini-redis/blob/main/cmd/server/main.go#L23) | main | main 解析 -addr/-aof 参数，订阅 Ctrl+C/SIGTERM，并将信号 context 交给 run 启动服务。 |
 | [cmd/server/main.go:38](https://github.com/Li-Nepenthe/mini-redis/blob/main/cmd/server/main.go#L38) | run | run 根据 addr 启动 TCP 服务，根据 aofPath 选择恢复并绑定日志；ctx 已取消时直接返回 nil。 |
 | [cmd/server/main_test.go:12](https://github.com/Li-Nepenthe/mini-redis/blob/main/cmd/server/main_test.go#L12) | TestRunCancellationStopsBackgroundWork | TestRunCancellationStopsBackgroundWork 验证取消 ctx 后 run 能在 3 秒内返回 nil，没有返回值。 |
@@ -124,11 +124,11 @@ P1 Git清单中没有vendor第三方源码或带Go生成标记的文件，故这
 | [database/ttl.go:25](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L25) | *shard.setExpiration | setExpiration 为 key 设置 deadline，并维护 expires→expiring 的索引；已有 key 续期只改期限、不重复入池。 |
 | [database/ttl.go:37](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L37) | *shard.clearExpiration | clearExpiration 移除 key 的 TTL 和抽样索引；不存在时无操作，无返回值，调用者须持 shard 写锁。 |
 | [database/ttl.go:57](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L57) | *shard.purgeExpired | purgeExpired 在 now 达到或超过 key 的期限时删除 data 与 TTL 索引，返回是否执行了过期删除。 |
-| [database/ttl.go:70](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L70) | *Engine.lockRead | lockRead 为 key 获取可读取当前状态的分片，返回 shard 和本轮 now；返回时仍持该 shard 的 RLock，调用者须 RUnlock。 |
-| [database/ttl.go:88](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L88) | parseExpirySeconds | parseExpirySeconds 将 value 的十进制文字解析为 int64 秒，返回秒数或 ErrInvalidInteger。 |
-| [database/ttl.go:99](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L99) | *Engine.ttl | ttl 执行 TTL，args 必须为命令名和 key，返回 int64 秒数：不存在/过期为 -2，存在无期限为 -1。 |
-| [database/ttl.go:124](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L124) | *Engine.RunCleanup | RunCleanup 阻塞运行 TTL 清理循环，ctx 取消后停止 ticker 并返回，没有独立错误返回。 |
-| [database/ttl.go:152](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L152) | *Engine.cleanupExpired | cleanupExpired 取一次当前时间并逐分片抽样删除已到期 key，返回本轮实际删除数量。 |
+| [database/ttl.go:71](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L71) | *Engine.lockRead | lockRead 为 key 获取可读取当前状态的分片，返回 shard 和本轮 now；返回时仍持该 shard 的 RLock，调用者须 RUnlock。 |
+| [database/ttl.go:89](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L89) | parseExpirySeconds | parseExpirySeconds 将 value 的十进制文字解析为 int64 秒，返回秒数或 ErrInvalidInteger。 |
+| [database/ttl.go:100](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L100) | *Engine.ttl | ttl 执行 TTL，args 必须为命令名和 key，返回 int64 秒数：不存在/过期为 -2，存在无期限为 -1。 |
+| [database/ttl.go:125](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L125) | *Engine.RunCleanup | RunCleanup 阻塞运行 TTL 清理循环，ctx 取消后停止 ticker 并返回，没有独立错误返回。 |
+| [database/ttl.go:153](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl.go#L153) | *Engine.cleanupExpired | cleanupExpired 取一次当前时间并逐分片抽样删除已到期 key，返回本轮实际删除数量。 |
 | [database/ttl_test.go:16](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl_test.go#L16) | clockEngine | clockEngine 返回注入固定 UTC 基准时钟的 Engine 及原子 elapsed，测试可推进 elapsed 控制当前时间。 |
 | [database/ttl_test.go:26](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl_test.go#L26) | TestTTLSemantics | TestTTLSemantics 用可控时钟验证 TTL=-2/-1、秒数取整、到期边界、SET 清期限与零/负 EXPIRE 删除。 |
 | [database/ttl_test.go:54](https://github.com/Li-Nepenthe/mini-redis/blob/main/database/ttl_test.go#L54) | TestExpiredKeysAreMissingForEveryCommand | TestExpiredKeysAreMissingForEveryCommand 为各命令重新构造刚到期的 String，验证它们都将过期 key 按缺失处理。 |

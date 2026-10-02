@@ -263,7 +263,7 @@ go test ./database -run='TestEngineOwnsStoredAndReturnedBytes|TestConcurrentList
 | 存活List的LPUSH/LPOP | 保留TTL；弹空后删key/TTL |
 | 过期key再LPUSH | 新List，没有旧值/旧TTL |
 
-lockRead成功返回仍持RLock。过期时不能在读锁下删，也不能持RLock直接Lock；当前先放读锁、取写锁、按新的时间重检。释放窗口中其他连接可能续期/SET，沿用旧判断会误删新状态。
+lockRead成功返回仍持RLock。过期时不能在读锁下删，也不能持RLock直接Lock；当前先放读锁、取写锁、按新的时间重检。释放窗口中其他连接可能SET重建同名值并重新EXPIRE，沿用旧判断会误删新状态；普通EXPIRE先清理已过期key，不能直接续活过期旧值。
 
 惰性删除保证访问时不可见；主动清理释放不再访问的冷key。每250ms对每shard最多随机检查256次，随后放锁；expiring支持O(1)取样。不是每tick全表扫描，也不保证每个冷key在固定tick立即物理删除。
 

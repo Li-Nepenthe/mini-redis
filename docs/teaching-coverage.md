@@ -12,7 +12,7 @@
 | 03 写准备 | executeWrite/prepareWrite | 五返回、类型错也解锁、no-op不日志 | PersistenceFailure/InvalidAndNoOp PASS | Q14/Q19 |
 | 04 路由/锁顺序 | NewEngine/fnv32/getShard/lockKeys | 18&15=2，2/9反序等待环 | lab04 elements=6；并发/race/回放一致 | Q06/Q07 |
 | 04 热点/硬件概念 | BenchmarkEngine；performance.md | 80%同key，缓存行伪共享对比 | 既有9格/CPU记录，未测P99 | Q08/Q27 |
-| 05 TTL语义/读升级 | lockRead/purgeExpired/ttl/parseExpirySeconds | 5/5/4/0/-2，放锁间续期重查 | 固定时钟/全部命令过期PASS | Q09/Q12 |
+| 05 TTL语义/读升级 | lockRead/purgeExpired/ttl/parseExpirySeconds | 5/5/4/0/-2，放锁间重建新值重查 | 固定时钟/全部命令过期PASS | Q09/Q12 |
 | 05 索引/清理 | setExpiration/clearExpiration/cleanupExpired/RunCleanup | [a,b,c]删b→[a,c]，冷key/旧timer | 索引/取消/锁外reclaim/10万key PASS | Q10/Q11 |
 | 05 OS回收故障 | RunCleanup/reclaim；主指南完整脚本 | HeapAlloc vs 工作集/Peak，旧失败与修复 | 既有同进程无GET/外部GC15/30秒回落 | Q13 |
 | 06 确认/持久化 | AttachLog/executeWrite/Store.Append/fail/Close | Write/Sync/apply/reply五个失败点 | 失败注入、千条强杀PASS | Q14/Q15/Q19 |

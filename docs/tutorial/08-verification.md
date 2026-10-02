@@ -2,7 +2,7 @@
 
 ## 8.1 每个测试也有职责与假设
 
-生产代码的152个具名函数计数包括91个测试/基准/fuzz/辅助方法，因为 fake Write/Close、startServer、clockEngine、request等也决定证据是否可信。`faultFile`只记次数/目标/注入错误，没有真实磁盘；`recordingLog`深拷贝逻辑记录，没有fsync。`TestMaximumSizedLPUSHFitsPersistedCreationRecord`用fake Store确认预算，真实文件重放由其他测试提供。
+P1源码清单的152个具名函数计数包括91个测试/基准/fuzz/辅助方法，因为 fake Write/Close、startServer、clockEngine、request等也决定证据是否可信。`faultFile`只记次数/目标/注入错误，没有真实磁盘；`recordingLog`深拷贝逻辑记录，没有fsync。`TestMaximumSizedLPUSHFitsPersistedCreationRecord`用fake Store确认预算，真实文件重放由其他测试提供。
 
 表驱动先写“输入/期望结果/期望错误”，再运行每项；如果只复制实现中的分支作为期望，就很容易同时写错。List的小数据例子、TTL固定时刻、原/回放引擎对照是独立可判断的事实。`errors.Is`判断身份，不是只比显示文字。Helper使失败指出调用者，Cleanup在测试结束释放资源，不能代替业务Close契约。
 

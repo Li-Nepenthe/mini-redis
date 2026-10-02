@@ -64,7 +64,8 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 	}
 	parseCtx, cancel := context.WithCancel(ctx)
 	ch := resp.NewRespParser().ParseStream(parseCtx, file)
-	// 该收尾闭包在文件最终移交/回收前取消生产者并等待通道，防止回放提前报错留下 goroutine。
+	// 收尾先取消解析；错误时先关文件打断 Read，再排空通道等待生产者退出，防止提前报错留下 goroutine。
+	// 成功路径等待解析完成后将文件交给返回的 Store，不关闭其句柄。
 	defer func() {
 		cancel()
 		if err != nil {
