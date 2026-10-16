@@ -19,7 +19,7 @@ go build ./...
 gofmt -l aof cmd database resp tcp
 ```
 
-预期所有测试通过，race无DATA RACE，vet/staticcheck/build退出0，gofmt没有文件名。root不会跨ai-backend新module；本轮没改它。Windows race缺C工具链时清楚记录“未运行”，不能用CGO_ENABLED=0普通测试冒充；使用现有工具，不凭教程静默安装系统依赖。
+预期所有测试通过，race无DATA RACE，vet/staticcheck/build退出0，gofmt没有文件名。Windows race缺C工具链时清楚记录“未运行”，不能用CGO_ENABLED=0普通测试冒充；使用现有工具，不凭教程静默安装系统依赖。
 
 | 方法 | 输入/观察 | 正确解释 | 常见过度推断 |
 |---|---|---|---|
@@ -69,7 +69,7 @@ docker run --name mini-redis-study -p 127.0.0.1:6382:6379 -v mini-redis-study-da
 
 预期启动；另一终端`redis-cli -p 6382 PING`为PONG，`docker stop --time 3 mini-redis-study`停止自己的容器。需要同一卷重启才是在看恢复，不删除数据后冒称成功。官方客户端未安装可用既有redis:alpine容器在同网络调用；不要自动拉取/安装未授权工具。
 
-GitHub Actions跑格式、race、vet、staticcheck、build；另外main含已授权M1，因此CI也有MySQL集成，但本教程不教学或推进P2。最近已完成PR#3 main4ae13a7的[CI37001111749](https://github.com/Li-Nepenthe/mini-redis/actions/runs/37001111749)全部成功；当前全注释/新教程提交需自己的精确HEAD检查，不拿旧绿灯代替。
+GitHub Actions跑格式、race、vet、staticcheck、build；2026-10-15 前 main 含已授权的 P2 M1，CI 另有 MySQL 集成 job；ai-backend 拆为独立仓库后，该 job 随之移出。最近已完成PR#3 main4ae13a7的[CI37001111749](https://github.com/Li-Nepenthe/mini-redis/actions/runs/37001111749)全部成功；当前全注释/新教程提交需自己的精确HEAD检查，不拿旧绿灯代替。
 
 ## 8.6 从工程证据回到学习证据
 

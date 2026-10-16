@@ -24,7 +24,7 @@
 
 ## P2 M1–M3：原最低版本要求，当前 M1 完成、M2局部、其余暂停
 
-实现放在同仓独立 Go module 的 ai-backend/。当前main只有M1 API，真实MySQL已用自有容器验收；尚无Worker或Redis/Kafka业务集成，不将计划当交付。Provider小块在本地5a973b7，独立审查/测试通过但不在main；M2未完成。P1接口不因P2改变，不用Mini-Redis替代完整Redis的Lua能力。
+实现原放在同仓独立 Go module 的 ai-backend/，2026-10-15 已拆为与本仓库平级的独立仓库 ai-backend（保留提交历史），下表证据位置按拆分前记录。当前main只有M1 API，真实MySQL已用自有容器验收；尚无Worker或Redis/Kafka业务集成，不将计划当交付。Provider小块在本地5a973b7，独立审查/测试通过但不在main；M2未完成。P1接口不因P2改变，不用Mini-Redis替代完整Redis的Lua能力。
 
 | 编号 | 要求（含完成特征/材料） | 交付/证据 | 状态 |
 |---|---|---|---|

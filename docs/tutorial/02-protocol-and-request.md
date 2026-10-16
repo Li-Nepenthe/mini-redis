@@ -91,7 +91,7 @@ record=1 args=["SET" "k" "v"] bytes=27 err=<nil>
 record=2 args=["GET" "k"] bytes=20 err=<nil>
 ```
 
-顺序/大小都保持。若只有一个记录，检查你是否真的拼了 GET；若 import 找不到，检查 replace 指向根 `go.mod` 所在路径，而非 ai-backend；若一直不结束，检查是否使用有结束的 strings.Reader 或是否忘关 Pipe 写端。
+顺序/大小都保持。若只有一个记录，检查你是否真的拼了 GET；若 import 找不到，检查 replace 指向根 `go.mod` 所在路径；若一直不结束，检查是否使用有结束的 strings.Reader 或是否忘关 Pipe 写端。
 
 在仓库根运行边界测试：
 

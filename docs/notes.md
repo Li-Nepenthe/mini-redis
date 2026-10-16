@@ -596,3 +596,8 @@ Go1.27.1、Windows/amd64，仅项目子进程使用已有便携GCC供race，Stat
 两名只读审查者分别核对全部函数/接口与十章教程。初稿5e749cc发现的说明缺口已修正：lockRead放锁窗口以SET重建同名值并重设期限解释，普通EXPIRE不能续活已过期旧值；prepare仅延迟新业务提交，仍可能惰性删除旧过期值；cmd/client的bulk ReadFull错误只退出switch、外层循环继续，准确记录现有限制而不改行为；AOF回放失败的收尾闭包先取消并关文件打断Read，再排空通道等待退出，成功才等待后移交文件；152函数称为P1源码总数而非生产函数数。第1章补齐:=、map初始化、slice复制/展开、索引、string/[]byte转换与格式化，并增加删除复制后stored=X、恢复后stored=v的专用lab对照。这些是本轮发现并修正文案的结果；不是新增产品功能或替本人学习验收。
 
 修订后再次运行普通/race/vet/Staticcheck/build/格式与五个正文程序，全部通过；新增第1章别名反例也编译运行，三行stored=X/SET成功/GET返回X逐字匹配。七包/152函数/11接口零缺漏以及33原Go文件token等价再次确认，函数清单行号重新生成；206链接、28测试模式与32完整题答结构检查通过。首轮日志另存p1-complete-initial-5e749cc，当前p1-complete-*为修订后证据；最终语义复核与远端CI仍须绑定修订提交，而非使用初稿通过结论。
+
+
+## 2026-10-15 · ai-backend 拆为独立仓库
+
+按用户要求，第二阶段的 `ai-backend/` 用 `git subtree split` 带历史拆到与本仓库平级的 `D:/Code/GO项目/ai-backend`（main 与本地分支 codex/ai-backend-m2-m3-20261002 都已拆出，拆分时与原目录逐字节一致），本仓库删除该目录与 CI 中的 ai-backend job，并改正 README 与教程里描述当前结构的句子。历史记录（本文件早先各节、comment-coverage 的计数清单）保持原样。原分支 codex/ai-backend-p2-20261002、codex/ai-backend-m2-m3-20261002 及其工作树仍留在本仓库，未删除。

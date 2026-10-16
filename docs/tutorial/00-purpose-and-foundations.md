@@ -22,7 +22,7 @@
 
 ## 0.3 最少前置知识，配当前代码理解
 
-**包（package）与模块（module）**：目录里的 Go 文件组成包；模块是 `go.mod` 规定的导入路径/版本单位。根模块为 `github.com/Li-Nepenthe/mini-redis`；`ai-backend` 是另一个暂停模块。`go test ./...` 从根运行不会自动跨入它。`cmd/server` 与 `cmd/client` 都写 `package main`，因为它们各自是可执行程序，目录不同并不冲突。
+**包（package）与模块（module）**：目录里的 Go 文件组成包；模块是 `go.mod` 规定的导入路径/版本单位。根模块为 `github.com/Li-Nepenthe/mini-redis`；一个仓库可以放多个模块，各有自己的 `go.mod`，从根运行 `go test ./...` 不会跨入另一个模块（本仓库曾有 `ai-backend` 模块，2026-10-15 已拆为独立仓库）。`cmd/server` 与 `cmd/client` 都写 `package main`，因为它们各自是可执行程序，目录不同并不冲突。
 
 **值、指针、slice、map**：`*Engine` 指向共享引擎；`[]byte` 是描述底层字节数组的切片，复制切片描述符通常不复制字节。`[][]byte` 是“多个参数，每个参数是一段字节”，例如 `[SET,k,v]`。map 做 key 查找，`map[string]any` 的 value 可能是 String 字节或 `*LinkedList`；`any` 是 `interface{}` 的别名，不表示自动知道类型。
 

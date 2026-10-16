@@ -1,8 +1,0 @@
-.env
-data/
-bin/
-*.exe
-*.test
-coverage.out
-eval/results-*.json
-load/results-*.json

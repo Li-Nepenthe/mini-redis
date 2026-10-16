@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-P1 的 S1–S5 工程验收完成；S6 的代码/Docker/停机与复审修复已通过，PR #1 已合并为 main@84d3c8c，合并后的 CI 全绿，默认首页已显示此项目文档。仍待仓库 description/topics 的可用写入口与本人七项口述，不能宣称个人学习封版。P2 的 [ai-backend/](ai-backend/README.md) M1 已通过独立审查/真实 MySQL/准确 HEAD CI，PR #2 合并为 main@ef8817d。用户于 2026-10-02 要求暂停第二阶段；现有 Provider 小块只留本地审查提交，M2 整体未完成、M3–M5 未实施且暂停。当前优先完成 P1 学习/设计理由；逐项状态见 [验收矩阵](docs/acceptance-matrix.md)。
+P1 的 S1–S5 工程验收完成；S6 的代码/Docker/停机与复审修复已通过，PR #1 已合并为 main@84d3c8c，合并后的 CI 全绿，默认首页已显示此项目文档。仍待仓库 description/topics 的可用写入口与本人七项口述，不能宣称个人学习封版。P2 的 AI 后端（原 `ai-backend/` 目录，2026-10-15 已拆为与本仓库平级的独立仓库 ai-backend，保留提交历史）M1 已通过独立审查/真实 MySQL/准确 HEAD CI，PR #2 合并为 main@ef8817d。用户于 2026-10-02 要求暂停第二阶段；现有 Provider 小块只留本地审查提交，M2 整体未完成、M3–M5 未实施且暂停。当前优先完成 P1 学习/设计理由；逐项状态见 [验收矩阵](docs/acceptance-matrix.md)。
 
 从 [中文学习指南](docs/learning-guide.md) 开始：命令演练 → 调用链 → 函数契约/锁/所有权 → TTL/AOF真实缺陷 → 停机/证据 → 分轮练习与自查。每次只做当前学习轮次；关键 WHY、替代取舍和错误后果均对照源码。阶段和实际命令/结果见 [开发记录](docs/notes.md)，进度表见执行说明书 §6。
 

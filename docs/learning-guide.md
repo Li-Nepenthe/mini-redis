@@ -74,7 +74,7 @@ Go接口按方法集隐式满足，不写Java式implements。`CommandExecutor`�
 
 ## 3. 先运行，再预测结果
 
-在根目录运行P1；根go.mod要求Go≥1.26，本次验证用1.27.1。ai-backend/是独立module，根`go test ./...`不会测试它。
+在根目录运行P1；根go.mod要求Go≥1.26，本次验证用1.27.1。第二阶段的 ai-backend 已于 2026-10-15 拆为独立仓库，不在本仓库内。
 
 ```powershell
 go version
