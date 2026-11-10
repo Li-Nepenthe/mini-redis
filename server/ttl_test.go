@@ -1,11 +1,11 @@
-package tcp_test
+// 本文件：通过真实 TCP 验证过期命令的回复字节，覆盖请求到引擎的完整路径。
+
+package server
 
 import "testing"
 
-// TestTTLCommandsOnTCP 在真实连接检查缺失/无期限/有期限及 EXPIRE0 删除的 RESP 整数与空 bulk 编码。
-// t 逐条比较已知字节，连接和 listener 由测试辅助清理；精确过期时间边界另用数据库固定时钟测试。
 func TestTTLCommandsOnTCP(t *testing.T) {
-	_, listener, _, _ := startServer(t)
+	_, listener, _ := startServer(t)
 	conn := dial(t, listener.Addr().String())
 	for _, test := range []struct {
 		args []string

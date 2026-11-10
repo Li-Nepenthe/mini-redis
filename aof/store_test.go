@@ -1,4 +1,4 @@
-// 本文件：经真实 AOF 文件检查恢复、截断、锁和写入顺序；faultFile 与自有子进程分别制造存储失败和强制退出。
+// 本文件：通过真实日志、受控文件故障和子进程崩溃验证恢复、独占锁及刷盘确认边界。
 
 package aof
 
@@ -110,12 +110,12 @@ func TestExpiredListWithLaterPushDoesNotResurrectOnReopen(t *testing.T) {
 func TestMaximumSizedLPUSHFitsPersistedCreationRecord(t *testing.T) {
 	request := [][]byte{[]byte("LPUSH"), []byte("max"),
 		make([]byte, resp.MaxBulkLength), make([]byte, resp.MaxBulkLength-128)}
-	initial, err := encodeRequest(request)
+	initial, err := resp.AppendRequest(nil, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request[3] = append(request[3], make([]byte, resp.MaxRequestLength-len(initial))...)
-	wire, err := encodeRequest(request)
+	wire, err := resp.AppendRequest(nil, request)
 	if err != nil || len(wire) != resp.MaxRequestLength {
 		t.Fatalf("boundary fixture length=%d err=%v", len(wire), err)
 	}

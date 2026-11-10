@@ -1,46 +1,58 @@
 // 本文件：TestShutdownTimeoutDoesNotHideBlockedExecutor 区分停机超时与执行器真正结束，防止超时掩盖未完成的工作。
 
-package resp
+package server
 
 import (
 	"context"
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
-// TestShutdownTimeoutDoesNotHideBlockedExecutor 故意阻塞执行器，先观察停机超时，再放行并等待回收，区分超时返回和工作结束。
+// 超时先返回给调用者，强制 Close 仍须等执行器结束，不能用关闭连接冒充工作已经回收。
 func TestShutdownTimeoutDoesNotHideBlockedExecutor(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
-	handler := NewRespHandler(NewRespParser(), executorFunc(func([][]byte) (any, error) {
+	s := NewServer("", executorFunc(func([][]byte) (any, error) {
 		close(started)
 		<-release
 		return database.StatusReply("OK"), nil
 	}))
-	server, client := net.Pipe()
+	var once sync.Once
+	defer func() { once.Do(func() { close(release) }); _ = s.Close() }()
+	conn, client := net.Pipe()
 	defer client.Close()
-	handled := make(chan struct{})
-	go func() { handler.Handle(server); close(handled) }()
-	go func() { _, _ = io.WriteString(client, "*1\r\n$4\r\nPING\r\n") }()
+	s.startConnection(conn)
+	if _, err := io.WriteString(client, "*1\r\n$4\r\nPING\r\n"); err != nil {
+		t.Fatal(err)
+	}
 	<-started
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	err := handler.Shutdown(ctx)
-	close(release)
+	err := s.Shutdown(ctx)
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
 		t.Fatalf("shutdown error=%v elapsed=%s", err, time.Since(start))
 	}
-	select {
-	case <-handled:
-	case <-time.After(time.Second):
-		t.Fatal("released executor left a parser or handler behind")
+	if connectionCount(s) != 1 {
+		t.Fatal("timeout hid blocked executor")
 	}
-	if err := handler.Close(); err != nil {
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned before blocked executor finished")
+	case <-time.After(20 * time.Millisecond):
+	}
+	once.Do(func() { close(release) })
+	if err := awaitError(t, closed); err != nil {
 		t.Fatal(err)
+	}
+	if connectionCount(s) != 0 {
+		t.Fatal("released executor left connection work behind")
 	}
 }

@@ -1,16 +1,17 @@
+// 本文件：用固定输入和分段 Pipe 检查 ReadRequest 的参数结果、错误和连续读取。
+
 package resp
 
 import (
+	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"reflect"
 	"testing"
 )
 
-// TestParser 用 parentT 的表驱动子测试验证 GET/SET、含 CRLF 内容及非数组/非法长度/残帧/结束符等解析结果。
-// 期望错误时不得附带 Data，成功时参数逐字节匹配；bytes.Reader 模型不单独验证真实半包等待。
+// 保留各类合法、越界和损坏输入的预期结果，报错时不能同时交出部分参数。
 func TestParser(parentT *testing.T) {
 
 	tests := []struct {
@@ -103,40 +104,28 @@ func TestParser(parentT *testing.T) {
 	for _, tt := range tests {
 		parentT.Run(tt.name, func(caseT *testing.T) {
 			reader := bytes.NewReader([]byte(tt.input))
-			parser := NewRespParser()
-			channel := parser.ParseStream(context.Background(), reader)
-			var got [][]byte
-			var gotErr error
-			for payload := range channel {
-				if payload.Err != nil {
-
-					gotErr = payload.Err
-					continue
-				}
-				got = payload.Data
-			}
+			got, _, gotErr := ReadRequest(bufio.NewReader(reader))
 
 			if (gotErr != nil) != tt.wantErr {
-				caseT.Fatalf("ParseStream() 返回错误 = %v，是否预期错误 = %v",
+				caseT.Fatalf("ReadRequest() 返回错误 = %v，是否预期错误 = %v",
 					gotErr, tt.wantErr)
 			}
 
 			if tt.wantErr {
 				if got != nil {
-					caseT.Fatalf("ParseStream() 报错后仍然返回了数据：%q", got)
+					caseT.Fatalf("ReadRequest() 报错后仍然返回了数据：%q", got)
 				}
 				return
 			}
 
 			if !reflect.DeepEqual(got, tt.want) {
-				caseT.Fatalf("ParseStream() 返回值 = %q，预期值 = %q", got, tt.want)
+				caseT.Fatalf("ReadRequest() 返回值 = %q，预期值 = %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestParserMultipleCommands 将两条请求粘连在同一 reader，验证按顺序得到两份参数而不吞掉后续帧。
-// t 收集通道全部 Payload 并比较完整序列，没有网络操作；半包阻塞另由 Pipe 测试覆盖。
+// 连续读两条粘连请求，确保读缓冲中的后续帧不会丢失。
 func TestParserMultipleCommands(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -165,39 +154,41 @@ func TestParserMultipleCommands(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := bytes.NewReader([]byte(tt.input))
-			parser := NewRespParser()
-			channel := parser.ParseStream(context.Background(), reader)
+			buffer := bufio.NewReader(reader)
 			var got [][][]byte
 			var gotErr error
-			for payload := range channel {
-				if payload.Err != nil {
-					gotErr = payload.Err
-					continue
+			for {
+				args, _, err := ReadRequest(buffer)
+				if err == io.EOF {
+					break
 				}
-				got = append(got, payload.Data)
+				if err != nil {
+					gotErr = err
+					break
+				}
+				got = append(got, args)
 			}
 
 			if (gotErr != nil) != tt.wantErr {
-				t.Fatalf("ParseStream() 返回错误 = %v，是否预期错误 = %v",
+				t.Fatalf("ReadRequest() 返回错误 = %v，是否预期错误 = %v",
 					gotErr, tt.wantErr)
 			}
 
 			if tt.wantErr {
 				if got != nil {
-					t.Fatalf("ParseStream() 报错后仍然返回了数据：%q", got)
+					t.Fatalf("ReadRequest() 报错后仍然返回了数据：%q", got)
 				}
 				return
 			}
 
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("ParseStream() 返回值 = %q，预期值 = %q", got, tt.want)
+				t.Fatalf("ReadRequest() 返回值 = %q，预期值 = %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestParserFragmentedInput 通过 io.Pipe 分次发送同一 GET 的头和内容，验证 Parser 等待并拼齐正确参数。
-// t 管理写端 EOF/错误并读取到通道结束，真实覆盖分段阻塞而非将完整字符串一次性给 Parser。
+// 用 Pipe 分段写入，确保 ReadRequest 会等待完整请求，且下一次读取能识别干净 EOF。
 func TestParserFragmentedInput(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -223,8 +214,7 @@ func TestParserFragmentedInput(t *testing.T) {
 
 			// Pipe 允许分段发送并阻塞读取，才能覆盖真正的半包等待。
 			reader, writer := io.Pipe()
-			parser := NewRespParser()
-			channel := parser.ParseStream(context.Background(), reader)
+			defer reader.Close()
 			go func() {
 				for _, chunk := range tt.chunks {
 					_, err := writer.Write([]byte(chunk))
@@ -236,15 +226,16 @@ func TestParserFragmentedInput(t *testing.T) {
 				_ = writer.Close() // 手动关闭后触发EOF
 			}()
 
-			var got [][]byte
-			for payload := range channel {
-				if payload.Err != nil {
-					t.Fatalf("分片解析失败：%v", payload.Err)
-				}
-				got = payload.Data
+			buffer := bufio.NewReader(reader)
+			got, _, err := ReadRequest(buffer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ReadRequest(buffer); err != io.EOF {
+				t.Fatalf("after fragmented frame: %v", err)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("ParseStream() 返回值 = %q，预期值 = %q", got, tt.want)
+				t.Fatalf("ReadRequest() 返回值 = %q，预期值 = %q", got, tt.want)
 			}
 		})
 	}

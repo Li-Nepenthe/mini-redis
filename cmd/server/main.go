@@ -1,3 +1,5 @@
+// 本文件：main 解析启动参数，run 组装引擎、AOF 与 Server，并按顺序收束网络和后台清理。
+
 package main
 
 import (
@@ -7,8 +9,7 @@ import (
 	"fmt"
 	"github.com/Li-Nepenthe/mini-redis/aof"
 	"github.com/Li-Nepenthe/mini-redis/database"
-	"github.com/Li-Nepenthe/mini-redis/resp"
-	"github.com/Li-Nepenthe/mini-redis/tcp"
+	"github.com/Li-Nepenthe/mini-redis/server"
 	"log"
 	"net"
 	"os"
@@ -31,10 +32,8 @@ func main() {
 	}
 }
 
-// run 根据 addr 启动 TCP 服务，根据 aofPath 选择恢复并绑定日志；ctx 已取消时直接返回 nil。
-// 先获得监听端口再打开 AOF，避免重复启动时碰触在用日志；依次组装 16 分片 Engine、Parser、Handler 和 Server。
-// 拥有清理 worker、信号观察 goroutine 和文件：网络结束后取消并等待 worker，再 Close AOF；defer 后进先出保障该顺序。
-// 返回监听/恢复/服务/文件关闭错误。2 秒是网络排空预算，不能强行取消任意 Exec、fsync 或同步 GC。
+// 先占端口再恢复日志，避免重复启动时触碰正在服务的 AOF。
+// 启动者拥有清理循环与信号观察工作；网络停止后先等后台退出，再关闭日志，防止最后的写入落到已关闭的文件。
 func run(ctx context.Context, addr, aofPath string) (runErr error) {
 	if ctx.Err() != nil {
 		return nil
@@ -49,7 +48,7 @@ func run(ctx context.Context, addr, aofPath string) (runErr error) {
 	defer cancel()
 	fmt.Println("Mini-Redis 服务端启动中....")
 
-	// 引擎与 RESP 通过接口连接，协议测试可注入慢执行器/故障而不用复制业务实现。
+	// 网络只依赖执行接口，恢复完成后才开始接收请求。
 	dbEngine := database.NewEngine(16)
 	if aofPath != "" {
 		if err := os.MkdirAll(filepath.Dir(aofPath), 0o755); err != nil {
@@ -79,12 +78,8 @@ func run(ctx context.Context, addr, aofPath string) (runErr error) {
 		cancel()
 		<-cleanupDone
 	}()
-	rp := resp.NewRespParser()
-
-	handler := resp.NewRespHandler(rp, dbEngine)
-
 	// Serve 结束前等待停机完成；其后的 defer 才会关闭清理工作与 AOF。
-	server := tcp.NewServer(addr, handler)
+	network := server.NewServer(addr, dbEngine)
 	watchStop, watchDone := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(watchDone)
@@ -92,12 +87,12 @@ func run(ctx context.Context, addr, aofPath string) (runErr error) {
 		case <-ctx.Done():
 			shutdownCtx, stop := context.WithTimeout(context.Background(), 2*time.Second)
 			defer stop()
-			_ = server.Shutdown(shutdownCtx)
+			_ = network.Shutdown(shutdownCtx)
 		case <-watchStop:
 		}
 	}()
 	fmt.Println("开始监听....")
-	err = server.Serve(listener)
+	err = network.Serve(listener)
 	close(watchStop)
 	<-watchDone
 	return err

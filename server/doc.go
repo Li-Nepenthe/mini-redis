@@ -1,5 +1,17 @@
-// Package tcp 管理监听器、接受连接、连接任务登记和服务停机；不解析命令或保存业务数据。
-// 生产代码依赖 Go 标准库，通过 Handler 接口交接已接收连接；协议/数据库实现由启动程序注入。
-// closed 与 WaitGroup.Add 在同锁下维护，停机关闭登记门再等待；Shutdown 排空，Close 强制关闭并等待。
-// 监听器由 Server 接管，连接由 Handler 接管；网络期限不能终止任意业务执行器或文件同步。
-package tcp
+// 本文件：说明本包职责、阅读入口和各文件分工。
+
+// Package server 负责监听、连接处理和停机。
+// 从 server.go 的 Serve 进入连接循环，再读 connection.go 的 handle；Shutdown 与命令开始共用同一道入口检查。
+//
+// 文件分工如下：
+//   - doc.go：本包导航。
+//   - server.go：Server、Executor、监听和停机。
+//   - connection.go：每个连接同步读取、执行并完整回复。
+//   - server_test.go：监听失败、异常连接隔离和连接回收。
+//   - connection_test.go：回复失败、协议错误与停机后的连接拒绝。
+//   - shutdown_test.go：排空当前回复并拒绝预读流水线。
+//   - timeout_test.go：超时与执行器真正退出的区别。
+//   - commands_test.go：同一连接上的连续命令。
+//   - ttl_test.go：过期命令的 TCP 回复。
+//   - golden_test.go：固定完整会话字节，读取 testdata/session.golden。
+package server

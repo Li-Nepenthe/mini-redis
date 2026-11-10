@@ -1,6 +1,6 @@
 // 本文件：用 TestSessionGolden 固定一次真实 TCP 会话的全部回复，作为后续协议和服务重构的字节基线。
 
-package tcp_test
+package server
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ func TestSessionGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, listener, _, _ := startServer(t)
+	_, listener, _ := startServer(t)
 	conn := dial(t, listener.Addr().String())
 	var input strings.Builder
 	for _, parts := range [][]string{

@@ -1,22 +1,15 @@
+// 本文件：ReadRequest 和 readHeader 同步解析一条 RESP 请求，保留协议上限、错误分类和实际字节计数。
+
 package resp
 
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
 )
-
-type Payload struct {
-	BytesRead int // 用实际消费字节定位 AOF，不能用 bufio 预读量或重新编码长度代替。
-	Data      [][]byte
-	Err       error
-}
-
-type Parser struct{}
 
 const (
 	MaxArrayLength   = 1024
@@ -25,42 +18,8 @@ const (
 	MaxRequestLength = 32 << 20
 )
 
-// NewRespParser 返回无共享可变状态的 RESP 请求解析器，不读取输入或启动 goroutine。
-// 实际解析与通道生命周期在每次 ParseStream 调用中独立创建，同一实例可为不同连接提供解析。
-func NewRespParser() *Parser {
-	return &Parser{}
-}
-
-// ParseStream 为 reader 启动一个解析 goroutine，返回只读 Payload 通道，依次提供完整参数或一次解析错误后关闭通道。
-// 干净 EOF 不发错误；Payload.BytesRead 仅完整成功帧有效，用于真实 AOF 偏移。生产者负责关闭 channel，消费者不可关闭它。
-// ctx 可停止循环/解除 channel 发送阻塞，但不能打断任意 reader.Read；所有者必须关闭阻塞 reader 并等待通道关闭。
-func (p *Parser) ParseStream(ctx context.Context, reader io.Reader) <-chan *Payload {
-	channel := make(chan *Payload)
-	go func() {
-		defer close(channel)
-		buffer := bufio.NewReader(reader)
-		for ctx.Err() == nil {
-			args, size, err := readRequest(ctx, buffer)
-			if err == io.EOF || ctx.Err() != nil {
-				return
-			}
-			payload := &Payload{Data: args, Err: err, BytesRead: size}
-			select {
-			case channel <- payload:
-			case <-ctx.Done():
-				return
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	return channel
-}
-
-// readHeader 从 bufio reader 读取一个带 CRLF 的长度头，返回去掉 CRLF 的字节或格式/长度/读取错误。
-// 头预算含 CRLF；完全无字节 EOF 返回 io.EOF，残头则包装 EOF 供 AOF 判半尾。返回切片借用 reader 缓冲，须在下次读取前处理。
-// ReadSlice 使用固定缓冲避免恶意无换行输入无限扩容，不把内容段中的 CRLF 当作 bulk 边界。
+// 头部必须有界，避免恶意的无换行输入无限扩容。
+// 完全没有字节的 EOF 与残头分开返回，AOF 才能区分文件结束和半条尾部。
 func readHeader(reader *bufio.Reader) ([]byte, error) {
 	// ReadBytes 会随恶意无换行输入扩容；固定缓冲的 ReadSlice 能在达到上限时停止。
 	line, err := reader.ReadSlice('\n')
@@ -79,10 +38,9 @@ func readHeader(reader *bufio.Reader) ([]byte, error) {
 	return line[:len(line)-2], nil
 }
 
-// readRequest 按数组→bulk 长度→精确内容→CRLF 读取一条请求，返回参数、实际完整帧字节数及错误。
-// ctx 在逐参数阶段检查；失败返回 nil、0、错误，开头干净 EOF 单独返回。允许空数组，但业务上是否忽略由 Handler 决定。
-// 分配前检查 1024 参数、16MiB 单 bulk、64 字节头和 32MiB 整帧预算；ReadFull 可跨 TCP 半包，bufio 保留后续粘连帧。
-func readRequest(ctx context.Context, reader *bufio.Reader) ([][]byte, int, error) {
+// ReadRequest 同步读取一条请求；成功时返回实际消费字节数，不能用预读量或重新编码长度代替。
+// 只有请求开头的干净 EOF 原样返回，其余残帧包装 EOF，供 AOF 决定是否修复尾部。
+func ReadRequest(reader *bufio.Reader) ([][]byte, int, error) {
 	line, err := readHeader(reader)
 	if err != nil {
 		return nil, 0, err
@@ -97,9 +55,6 @@ func readRequest(ctx context.Context, reader *bufio.Reader) ([][]byte, int, erro
 	used := len(line) + 2
 	args := make([][]byte, length)
 	for i := range args {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, err
-		}
 		header, err := readHeader(reader)
 		if err != nil {
 			return nil, 0, fmt.Errorf("protocol error: incomplete bulk header: %w", err)
