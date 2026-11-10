@@ -14,8 +14,7 @@ type failingLog struct {
 	calls int
 }
 
-// Append 增加 calls 并返回预先配置的 err，不存储参数或真实写盘。
-// 用于观察 Engine 是否尝试持久化及失败时禁止 apply；无同步保护，由引擎 logMu 串行调用。
+// 每次追加都失败，用来检查日志未确认时是否仍偷偷修改了内存。
 func (l *failingLog) Append([][]byte) error { l.calls++; return l.err }
 
 // TestPersistenceFailureDoesNotMutateMemory 让六种写入都遇到日志失败，再读取字符串、列表和 TTL。
@@ -65,8 +64,7 @@ func TestInvalidAndNoOpWritesDoNotAppend(t *testing.T) {
 
 type recordingLog struct{ records [][][]byte }
 
-// Append 深拷贝 args 的每个参数后加入 records 并返回 nil，记录逻辑持久化内容供回放对照。
-// 不真实刷盘；深拷贝防止后续参数复用改写历史，测试在引擎写序列或 logMu 下使用。
+// 保存独立副本，防止请求缓冲复用改写已经观察到的历史记录。
 func (l *recordingLog) Append(args [][]byte) error {
 	record := make([][]byte, len(args))
 	for i, arg := range args {
@@ -129,8 +127,7 @@ func TestReplayPreservesHistoricalExpiryAndCreation(t *testing.T) {
 	}
 }
 
-// TestLegacyReplayKeepsExpiryUntilFinalState 在重启时刻 6 秒顺序回放期限 5 与后续期限 14，验证 String 仍为 v、TTL 为 8。
-// t 防止恢复时按当前时间提前删历史值；不声称没有新建边界的所有旧草稿 AOF 都可无损恢复。
+// 先回放已经过去的期限，再回放续期，防止恢复过程提前丢掉历史值。
 func TestLegacyReplayKeepsExpiryUntilFinalState(t *testing.T) {
 	e, elapsed := clockEngine()
 	elapsed.Store(int64(6 * time.Second))
@@ -147,8 +144,7 @@ func TestLegacyReplayKeepsExpiryUntilFinalState(t *testing.T) {
 	requireExec(t, e, int64(8), "TTL", "k")
 }
 
-// TestReplayExpirationUsesAbsoluteDeadline 用固定基准时钟回放 SET 和 __EXPIREATMS，检查剩余 TTL 精确为 5。
-// t 检查绝对毫秒期限解释，不进行真实睡眠/文件操作；重启不能把原期限变成新的相对生命周期。
+// 固定重启时刻后检查剩余期限，防止恢复把旧的绝对时间变成新的相对寿命。
 func TestReplayExpirationUsesAbsoluteDeadline(t *testing.T) {
 	e, _ := clockEngine()
 	if err := e.Replay(command("SET", "k", "v")); err != nil {

@@ -1,30 +1,15 @@
-// 本文件：executeWrite 组织先日志后内存的写入，plan 函数计算各命令的变更，Replay 用同一套计划恢复历史记录。
+// 本文件：executeWrite 组织先日志后内存的写入，planWrite 取得值的所有权，各 plan 函数计算命令变更。
 
 package database
 
 import (
+	"bytes"
 	"errors"
-	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
 )
-
-const (
-	// 惰性过期不写日志。新列表必须覆盖历史旧值和旧 TTL，否则重放 LPUSH 会混入旧元素。
-	// _LNEW 与 LPUSH 同为五字节、参数个数相同，最大的合法请求落盘后仍在协议上限内。
-	recordNewList = "_LNEW"
-	// 记录绝对毫秒期限，避免重启时重新计算相对秒数，让 key 多活一段时间。
-	recordExpireAtMS = "__EXPIREATMS"
-)
-
-// CommandLog 的成功确认包含刷盘成功；引擎收到 nil 后才允许修改内存。
-type CommandLog interface {
-	Append(args [][]byte) error
-}
-
-// AttachLog 只在恢复完成、并发服务开始前绑定日志；运行中更换会打破写入确认的约定。
-func (e *Engine) AttachLog(log CommandLog) { e.log = log }
 
 // writePlan 把回复、日志和内存变更放在一起，避免调用者记忆几个返回值之间的约定。
 // 计算计划和执行 apply 必须持有同一批分片写锁，计划中的列表引用才不会被其他命令改动。
@@ -95,6 +80,12 @@ func writeKeys(args [][]byte, cmd string) [][]byte {
 // planWrite 统一日志中的大写命令名，另建参数切片，避免 planLPush 改写调用者的命令名。
 func (e *Engine) planWrite(args [][]byte, cmd string, now time.Time) (writePlan, error) {
 	record := append([][]byte{[]byte(cmd)}, args[1:]...)
+	// 存进引擎的字节由引擎自己持有。正常写入和重放都在这里复制值，避免各存储类型重复决定所有权。
+	if cmd == "SET" || cmd == "LPUSH" || cmd == recordNewList {
+		for i := 2; i < len(record); i++ {
+			record[i] = bytes.Clone(record[i])
+		}
+	}
 	switch cmd {
 	case "SET":
 		return e.planSet(record)
@@ -113,11 +104,11 @@ func (e *Engine) planWrite(args [][]byte, cmd string, now time.Time) (writePlan,
 	}
 }
 
-// planSet 留下独立的值副本；覆盖旧值时连旧 TTL 一起清掉，不能让新值继承旧的到期时间。
+// 覆盖值时连旧 TTL 一起清掉，不能让新值继承旧的到期时间。
 func (e *Engine) planSet(args [][]byte) (writePlan, error) {
 	key := string(args[1])
 	s := e.getShard(key)
-	value := append([]byte(nil), args[2]...)
+	value := args[2]
 	return writePlan{reply: StatusReply("OK"), record: args, apply: func() {
 		s.clearExpiration(key)
 		s.data[key] = value
@@ -130,10 +121,10 @@ func (e *Engine) planLPush(args [][]byte) (writePlan, error) {
 	s := e.getShard(key)
 	raw, exists := s.data[key]
 	fresh := !exists || string(args[0]) == recordNewList
-	list := NewLinkedList()
+	list := newLinkedList()
 	if !fresh {
 		var ok bool
-		list, ok = raw.(*LinkedList)
+		list, ok = raw.(*linkedList)
 		if !ok {
 			return writePlan{}, ErrTypeMismatch
 		}
@@ -141,12 +132,12 @@ func (e *Engine) planLPush(args [][]byte) (writePlan, error) {
 	if fresh {
 		args[0] = []byte(recordNewList)
 	}
-	return writePlan{reply: int64(list.Len() + len(args) - 2), record: args, apply: func() {
+	return writePlan{reply: int64(list.size() + len(args) - 2), record: args, apply: func() {
 		if fresh {
 			s.clearExpiration(key)
 		}
 		for _, value := range args[2:] {
-			list.LPush(value)
+			list.pushFront(value)
 		}
 		s.data[key] = list
 	}}, nil
@@ -160,13 +151,13 @@ func (e *Engine) planLPop(args [][]byte) (writePlan, error) {
 	if !exists {
 		return writePlan{}, nil
 	}
-	list, ok := raw.(*LinkedList)
+	list, ok := raw.(*linkedList)
 	if !ok {
 		return writePlan{}, ErrTypeMismatch
 	}
 	return writePlan{reply: list.head.val, record: args, apply: func() {
-		_, _ = list.LPop()
-		if list.Len() == 0 {
+		_, _ = list.popFront()
+		if list.size() == 0 {
 			delete(s.data, key)
 			s.clearExpiration(key)
 		}
@@ -213,40 +204,11 @@ func (e *Engine) planExpire(args [][]byte, now time.Time) (writePlan, error) {
 	return writePlan{reply: int64(1), record: record, apply: func() { s.setExpiration(key, deadline) }}, nil
 }
 
-// planExpireAt 还原日志里的绝对期限；即使期限早于重启时刻，也要等历史记录全部恢复后再判断过期。
-func (e *Engine) planExpireAt(args [][]byte) (writePlan, error) {
-	millis, err := strconv.ParseInt(string(args[2]), 10, 64)
-	if err != nil {
-		return writePlan{}, fmt.Errorf("invalid persisted expiry: %w", err)
+// 正数秒数转换成 Duration 前先限制范围，避免溢出变成负数；零和负数仍表示立即删除。
+func parseExpirySeconds(value []byte) (int64, error) {
+	seconds, err := strconv.ParseInt(string(value), 10, 64)
+	if err != nil || seconds > math.MaxInt64/int64(time.Second) {
+		return 0, ErrInvalidInteger
 	}
-	key := string(args[1])
-	s := e.getShard(key)
-	if _, exists := s.data[key]; !exists {
-		return writePlan{}, nil
-	}
-	return writePlan{record: args, apply: func() { s.setExpiration(key, time.UnixMilli(millis)) }}, nil
-}
-
-// Replay 恢复历史时不做惰性过期：后续记录可能续期，提前删除会丢掉本来仍有效的数据。
-// 启动者在恢复完成后才开放服务；这里直接应用计划，不再次写日志。
-func (e *Engine) Replay(args [][]byte) error {
-	if len(args) == 0 {
-		return ErrUnknownCmd
-	}
-	cmd := strings.ToUpper(string(args[0]))
-	switch cmd {
-	case "SET", "LPUSH", recordNewList, "LPOP", "DEL", recordExpireAtMS:
-	default:
-		return fmt.Errorf("invalid persisted command: %s", cmd)
-	}
-	if err := checkWriteArgs(args, cmd); err != nil {
-		return err
-	}
-	unlock := e.lockKeys(writeKeys(args, cmd), true)
-	defer unlock()
-	plan, err := e.planWrite(args, cmd, e.now())
-	if err == nil && plan.apply != nil {
-		plan.apply()
-	}
-	return err
+	return seconds, nil
 }

@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// command 将 parts 文本转为 Engine 所需的 [][]byte 并返回，供单元测试快速构造命令。
-// 不检查参数合法性、不编码协议、不修改引擎；错误路径可以故意传空或非法参数。
 func command(parts ...string) [][]byte {
 	args := make([][]byte, len(parts))
 	for i := range parts {
@@ -20,8 +18,6 @@ func command(parts ...string) [][]byte {
 	return args
 }
 
-// requireExec 用 parts 执行 e，要求无错误且结果与 want 深度相等，由 t 记录失败，无返回值。
-// 设置 Helper 将失败定位到测试调用处；被执行命令可修改 Engine，但本辅助函数不额外操作状态。
 func requireExec(t *testing.T, e *Engine, want any, parts ...string) {
 	t.Helper()
 	got, err := e.Exec(command(parts...))
@@ -113,8 +109,7 @@ func TestListRangeBoundaries(t *testing.T) {
 	}
 }
 
-// TestEngineOwnsStoredAndReturnedBytes 在 SET/LPUSH 后修改原输入，再修改 GET/LRANGE 返回字节，验证存储不被别名污染。
-// t 随后再次读/弹出确认原值；测试调用结束后的所有权，不允许调用期间并发修改输入。
+// 写入后修改原输入，读取后再修改返回值，两侧都不能反向污染引擎持有的字节。
 func TestEngineOwnsStoredAndReturnedBytes(t *testing.T) {
 	e := NewEngine(16)
 	value := []byte("original")
@@ -136,8 +131,7 @@ func TestEngineOwnsStoredAndReturnedBytes(t *testing.T) {
 	requireExec(t, e, []byte("list"), "LPOP", "list")
 }
 
-// TestConcurrentListAndMultiKeyCommands 让 8 个 worker 同时 SET、EXISTS、反序 DEL 和共享 List LPUSH，检查 800 个元素不丢失。
-// t 等待所有 worker；可配合 race 检测共享访问，有限运行通过不等于证明所有时序永无死锁。
+// 反序删除多个 key 与共享列表写入并行运行，同时检查锁顺序和元素是否丢失。
 func TestConcurrentListAndMultiKeyCommands(t *testing.T) {
 	e := NewEngine(16)
 	var workers sync.WaitGroup

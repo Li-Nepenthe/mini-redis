@@ -6,12 +6,16 @@
 // 写入最重要的边界是日志确认：先算好 writePlan，日志落盘后才修改内存。
 // 计划里的回复、记录和内存变更一起阅读，才能看出写失败时为何仍保留旧值。
 //
-// 从 engine.go 的 Exec 读起，再沿写命令进入 persistence.go 的 executeWrite。
+// 从 engine.go 的 Exec 读起，再沿写命令进入 write.go 的 executeWrite。
 // 文件分工如下：
 //   - doc.go：本包导航。
-//   - engine.go：命令入口、分片路由、有序加锁、列表结构和读命令。
-//   - persistence.go：写入计划、日志确认和历史记录重放。
-//   - ttl.go：过期时间、惰性删除和后台抽样清理。
+//   - engine.go：引擎创建和命令入口。
+//   - shard.go：分片路由和多 key 有序加锁。
+//   - list.go：分片锁保护下的双向链表。
+//   - read.go：GET、EXISTS、LRANGE 和 TTL。
+//   - write.go：字节所有权、写入计划和日志确认。
+//   - replay.go：日志接口、私有记录标记和历史重放。
+//   - expire.go：过期索引、惰性删除和后台抽样清理。
 //   - errors.go：区分客户端可见的错误和内部原因。
 //   - engine_test.go：命令语义、列表边界、字节所有权和并发测试。
 //   - persistence_test.go：日志失败、无效果写入和历史重放测试。

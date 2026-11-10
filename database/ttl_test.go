@@ -13,8 +13,7 @@ import (
 	"time"
 )
 
-// clockEngine 返回注入固定 UTC 基准时钟的 Engine 及原子 elapsed，测试可推进 elapsed 控制当前时间。
-// 时钟闭包读取 atomic.Int64，避免并发推进发生数据竞争；不启动 TTL worker，也不修改系统时钟。
+// 原子时钟让并发测试可以推进时间，同时避开真实睡眠带来的边界抖动。
 func clockEngine() (*Engine, *atomic.Int64) {
 	e := NewEngine(16)
 	var elapsed atomic.Int64
@@ -105,8 +104,7 @@ func TestListKeepsTTLAndExpiryIndexIsConsistent(t *testing.T) {
 	}
 }
 
-// TestExpireArgumentErrors 验证 EXPIRE/TTL 数量错误、非整数、int64 溢出及秒转 Duration 溢出被拒绝。
-// t 使用 errors.Is 检查数量/整数错误，无状态初始化需求；零与负秒是合法删除语义，另由 TTL 语义测试验证。
+// 把整数解析失败与秒转 Duration 溢出都挡在修改期限之前。
 func TestExpireArgumentErrors(t *testing.T) {
 	e := NewEngine(16)
 	for _, args := range [][]string{{"EXPIRE", "k"}, {"TTL"}, {"TTL", "k", "extra"}} {
@@ -123,8 +121,7 @@ func TestExpireArgumentErrors(t *testing.T) {
 	}
 }
 
-// TestCleanupCancellation 启动 RunCleanup 后取消 ctx，并在 1 秒内等待其完成通道。
-// t 验证 worker 响应取消且调用者实际等待；不验证大批数据清理或任意 GC 的最坏耗时。
+// 取消后等待清理循环退出，防止测试结束时仍遗留后台工作。
 func TestCleanupCancellation(t *testing.T) {
 	e := NewEngine(16)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -138,8 +135,7 @@ func TestCleanupCancellation(t *testing.T) {
 	}
 }
 
-// TestConcurrentExpirationAndCleanup 并发执行 SET/EXPIRE/TTL/GET/立即删除及主动 cleanupExpired，等待全部 worker 完成。
-// t 捕获业务错误，可配合 race 检查 data/TTL 索引同步；不据此声称单轮清理全部 key。
+// 让命令与主动清理同时访问期限和数据，用 race 检查它们是否共享同一套锁。
 func TestConcurrentExpirationAndCleanup(t *testing.T) {
 	e := NewEngine(16)
 	var workers sync.WaitGroup
