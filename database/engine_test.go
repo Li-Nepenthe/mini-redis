@@ -1,3 +1,5 @@
+// 本文件：验证 Exec 的命令语义、列表边界、字节所有权和并发读写；command 与 requireExec 组织测试请求和断言。
+
 package database
 
 import (
@@ -28,8 +30,8 @@ func requireExec(t *testing.T, e *Engine, want any, parts ...string) {
 	}
 }
 
-// TestCommandSequence 按顺序验证大小写命令、二进制 PING、String、List、重复 EXISTS/DEL 与缺失值返回类型。
-// t 比较业务结果而非 RESP 字节；List 最后一个元素弹出后 key 消失，编码另由 resp/tcp 测试覆盖。
+// TestCommandSequence 连续执行命令，检查前一次写入怎样影响下一次读取，同时固定回复的 Go 类型。
+// RESP 字节由协议和 TCP 测试保护，这里保留对状态值、整数、空值和列表内容的区分。
 func TestCommandSequence(t *testing.T) {
 	e := NewEngine(16)
 	for _, test := range []struct {
@@ -39,30 +41,29 @@ func TestCommandSequence(t *testing.T) {
 		{[]string{"ping"}, StatusReply("PONG")},
 		{[]string{"PiNg", "hello\x00\r\n"}, []byte("hello\x00\r\n")},
 		{[]string{"get", "missing"}, nil},
-		{[]string{"set", "foo", "bar"}, true},
+		{[]string{"set", "foo", "bar"}, StatusReply("OK")},
 		{[]string{"GeT", "foo"}, []byte("bar")},
-		{[]string{"exists", "foo", "foo", "missing"}, 2},
-		{[]string{"lpush", "mylist", "a", "b", "c"}, 3},
+		{[]string{"exists", "foo", "foo", "missing"}, int64(2)},
+		{[]string{"lpush", "mylist", "a", "b", "c"}, int64(3)},
 		{[]string{"lrange", "mylist", "0", "-1"}, [][]byte{[]byte("c"), []byte("b"), []byte("a")}},
 		{[]string{"lpop", "mylist"}, []byte("c")},
 		{[]string{"lpop", "mylist"}, []byte("b")},
 		{[]string{"lpop", "mylist"}, []byte("a")},
-		{[]string{"exists", "mylist"}, 0},
+		{[]string{"exists", "mylist"}, int64(0)},
 		{[]string{"lpop", "mylist"}, nil},
 		{[]string{"lrange", "missing", "0", "-1"}, [][]byte{}},
-		{[]string{"del", "foo", "foo", "missing"}, 1},
-		{[]string{"exists", "foo"}, 0},
+		{[]string{"del", "foo", "foo", "missing"}, int64(1)},
+		{[]string{"exists", "foo"}, int64(0)},
 	} {
 		requireExec(t, e, test.want, test.args...)
 	}
 }
 
-// TestCommandArgumentAndTypeErrors 表驱动验证未知命令、数量、整数溢出与 String/List 类型冲突。
-// t 使用 errors.Is 比较错误身份，避免仅比较错误文字；测试初始设置两种类型后执行非法命令，无独立网络 I/O。
+// TestCommandArgumentAndTypeErrors 用已存在的字符串和列表触发类型冲突，并按错误身份检查参数错误。
 func TestCommandArgumentAndTypeErrors(t *testing.T) {
 	e := NewEngine(16)
-	requireExec(t, e, true, "SET", "string", "v")
-	requireExec(t, e, 1, "LPUSH", "list", "v")
+	requireExec(t, e, StatusReply("OK"), "SET", "string", "v")
+	requireExec(t, e, int64(1), "LPUSH", "list", "v")
 	for _, test := range []struct {
 		args []string
 		want error
@@ -91,11 +92,10 @@ func TestCommandArgumentAndTypeErrors(t *testing.T) {
 	}
 }
 
-// TestListRangeBoundaries 验证 LRANGE 的闭区间、负索引、越界裁剪、反向/空区间与 int64 极端索引。
-// t 对固定三元素 List 比较返回的二维字节数组，无返回值；未在此测大链表性能。
+// TestListRangeBoundaries 固定三个元素，分别检查包含端点、裁剪越界和空范围，避免索引转换改变列表顺序。
 func TestListRangeBoundaries(t *testing.T) {
 	e := NewEngine(16)
-	requireExec(t, e, 3, "LPUSH", "list", "a", "b", "c")
+	requireExec(t, e, int64(3), "LPUSH", "list", "a", "b", "c")
 	for _, test := range []struct {
 		start, stop string
 		want        [][]byte

@@ -1,3 +1,5 @@
+// 本文件：用假执行器和连接制造处理失败，验证 Handler 仍能关闭连接并回收解析工作。
+
 package resp
 
 import (
@@ -10,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
 type executorFunc func([][]byte) (any, error)
@@ -75,15 +79,14 @@ func (c *scriptedConn) Close() error {
 	return nil
 }
 
-// TestHandlerEarlyReturnStopsParser 注入写失败和不支持的结果类型，验证 Handler 提前返回也取消 Parser、关闭连接并等通道结束。
-// t 用多个已预读帧触发潜在发送阻塞；不只检查发出了 cancel，而检查解析 goroutine 结束证据。
+// TestHandlerEarlyReturnStopsParser 让回复在编码或写入时失败，再检查解析工作真正结束，而不只是收到了取消信号。
 func TestHandlerEarlyReturnStopsParser(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		result   any
 		writeErr error
 	}{
-		{"write failure", true, errors.New("broken pipe")},
+		{"write failure", database.StatusReply("OK"), errors.New("broken pipe")},
 		{"encode failure", "unsupported result", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -129,11 +132,10 @@ func TestHandlerProtocolErrorIsSingleRESPLine(t *testing.T) {
 	}
 }
 
-// TestHandlerCloseInterruptsRead 用 net.Pipe 制造空闲阻塞 Read，验证 Close 打断并等待 Handle，重复关闭安全且拒后来的连接。
-// t 通过 started/完成通道协调时序，不以任意 sleep 猜测回收是否完成。
+// TestHandlerCloseInterruptsRead 用完成通道确认空闲连接被关闭后处理循环已经退出，不靠 sleep 猜测回收完成。
 func TestHandlerCloseInterruptsRead(t *testing.T) {
 	parser := &observedParser{started: make(chan struct{})}
-	handler := NewRespHandler(parser, executorFunc(func([][]byte) (any, error) { return true, nil }))
+	handler := NewRespHandler(parser, executorFunc(func([][]byte) (any, error) { return database.StatusReply("OK"), nil }))
 	server, client := net.Pipe()
 	defer client.Close()
 	handled := make(chan struct{})

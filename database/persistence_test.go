@@ -1,3 +1,5 @@
+// 本文件：用假日志观察写入失败和记录顺序，验证日志确认前内存不变，以及 Replay 对历史期限和新建边界的处理。
+
 package database
 
 import (
@@ -16,12 +18,12 @@ type failingLog struct {
 // 用于观察 Engine 是否尝试持久化及失败时禁止 apply；无同步保护，由引擎 logMu 串行调用。
 func (l *failingLog) Append([][]byte) error { l.calls++; return l.err }
 
-// TestPersistenceFailureDoesNotMutateMemory 对六种有效写注入日志失败，验证 String、List 和 TTL 原状态保留且 cause 可匹配。
-// t 比较错误与后续读，使用 failingLog 而非磁盘；不否认准备阶段可能惰性清理已过期旧数据。
+// TestPersistenceFailureDoesNotMutateMemory 让六种写入都遇到日志失败，再读取字符串、列表和 TTL。
+// 这样能发现计划阶段提前修改内存的问题，不能只凭返回了错误就认为写入已经撤销。
 func TestPersistenceFailureDoesNotMutateMemory(t *testing.T) {
 	e := NewEngine(16)
-	requireExec(t, e, true, "SET", "s", "old")
-	requireExec(t, e, 2, "LPUSH", "list", "a", "b")
+	requireExec(t, e, StatusReply("OK"), "SET", "s", "old")
+	requireExec(t, e, int64(2), "LPUSH", "list", "a", "b")
 	cause := errors.New("simulated disk failure")
 	log := &failingLog{err: cause}
 	e.AttachLog(log)
@@ -39,11 +41,10 @@ func TestPersistenceFailureDoesNotMutateMemory(t *testing.T) {
 	}
 }
 
-// TestInvalidAndNoOpWritesDoNotAppend 验证非法参数/类型和无效果写不进入日志，Replay 拒读命令且 Exec 拒私有恢复命令。
-// t 检查模拟日志调用数与错误身份，无真实文件；避免日志混入不可恢复或客户端可调用的内部格式。
+// TestInvalidAndNoOpWritesDoNotAppend 检查无效写入不会污染日志，同时把客户端命令与私有恢复标记隔开。
 func TestInvalidAndNoOpWritesDoNotAppend(t *testing.T) {
 	e := NewEngine(16)
-	requireExec(t, e, true, "SET", "string", "v")
+	requireExec(t, e, StatusReply("OK"), "SET", "string", "v")
 	log := &failingLog{}
 	e.AttachLog(log)
 	for _, args := range [][]string{{"SET", "k"}, {"LPUSH", "string", "v"}, {"EXPIRE", "missing", "10"}, {"LPOP", "missing"}, {"DEL", "missing"}} {
@@ -75,8 +76,8 @@ func (l *recordingLog) Append(args [][]byte) error {
 	return nil
 }
 
-// TestReplayPreservesHistoricalExpiryAndCreation 用固定时钟覆盖期限内追加、续期、过期重建、String 转新 List 和先清理再新建。
-// t 对比原引擎与回放引擎的 TTL/LRANGE/GET，并确认 Replay 不再次 Append；无需睡眠模拟历史时刻。
+// TestReplayPreservesHistoricalExpiryAndCreation 在相同时间读取运行中的引擎与恢复后的引擎。
+// 对比能发现重放时过早删除旧值、丢失新建边界或再次追加日志的问题。
 func TestReplayPreservesHistoricalExpiryAndCreation(t *testing.T) {
 	for _, name := range []string{"expired-list", "renewed-string", "recreated-list", "expired-string-to-list", "cleaned-list"} {
 		t.Run(name, func(t *testing.T) {
@@ -84,25 +85,25 @@ func TestReplayPreservesHistoricalExpiryAndCreation(t *testing.T) {
 			log := &recordingLog{}
 			e.AttachLog(log)
 			if name == "renewed-string" || name == "expired-string-to-list" {
-				requireExec(t, e, true, "SET", "k", "old")
+				requireExec(t, e, StatusReply("OK"), "SET", "k", "old")
 			} else {
-				requireExec(t, e, 1, "LPUSH", "k", "old")
+				requireExec(t, e, int64(1), "LPUSH", "k", "old")
 			}
-			requireExec(t, e, 1, "EXPIRE", "k", "5")
+			requireExec(t, e, int64(1), "EXPIRE", "k", "5")
 			switch name {
 			case "expired-list":
 				elapsed.Store(int64(time.Second))
-				requireExec(t, e, 2, "LPUSH", "k", "new")
+				requireExec(t, e, int64(2), "LPUSH", "k", "new")
 			case "renewed-string":
 				elapsed.Store(int64(4 * time.Second))
-				requireExec(t, e, 1, "EXPIRE", "k", "10")
+				requireExec(t, e, int64(1), "EXPIRE", "k", "10")
 			default:
 				elapsed.Store(int64(6 * time.Second))
 				if name == "cleaned-list" {
 					// 清理删除没有持久化记录；新建标记也必须覆盖这个路径。
 					requireExec(t, e, int64(-2), "TTL", "k")
 				}
-				requireExec(t, e, 1, "LPUSH", "k", "new")
+				requireExec(t, e, int64(1), "LPUSH", "k", "new")
 			}
 			elapsed.Store(int64(6 * time.Second))
 			restored, restoredElapsed := clockEngine()

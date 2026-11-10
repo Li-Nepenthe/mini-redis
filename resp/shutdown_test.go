@@ -1,3 +1,5 @@
+// 本文件：TestShutdownTimeoutDoesNotHideBlockedExecutor 区分停机超时与执行器真正结束，防止超时掩盖未完成的工作。
+
 package resp
 
 import (
@@ -7,16 +9,17 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
-// TestShutdownTimeoutDoesNotHideBlockedExecutor 将执行器阻塞到 release，验证 Shutdown 到期返回 DeadlineExceeded 而不假装工作结束。
-// t 随后释放执行器并等待 Handle/Close，证明网络超时与最终回收是两个动作；不向外部服务发信号。
+// TestShutdownTimeoutDoesNotHideBlockedExecutor 故意阻塞执行器，先观察停机超时，再放行并等待回收，区分超时返回和工作结束。
 func TestShutdownTimeoutDoesNotHideBlockedExecutor(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	handler := NewRespHandler(NewRespParser(), executorFunc(func([][]byte) (any, error) {
 		close(started)
 		<-release
-		return true, nil
+		return database.StatusReply("OK"), nil
 	}))
 	server, client := net.Pipe()
 	defer client.Close()

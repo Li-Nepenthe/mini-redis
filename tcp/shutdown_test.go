@@ -1,7 +1,10 @@
+// 本文件：用受控执行器暂停第一条命令，验证 TCP 停机排空当前回复，同时拒绝流水线里尚未开始的命令。
+
 package tcp_test
 
 import (
 	"context"
+	"github.com/Li-Nepenthe/mini-redis/database"
 	"github.com/Li-Nepenthe/mini-redis/resp"
 	"github.com/Li-Nepenthe/mini-redis/tcp"
 	"io"
@@ -30,14 +33,13 @@ type delayedExecutor struct {
 	calls   atomic.Int32
 }
 
-// Exec 增加 calls，首次关闭 started，然后等待 release 放行并返回 true、nil。
-// 忽略参数，专门制造执行中命令以测试停机；本身不响应 context，测试必须保证最终关闭 release。
+// Exec 由 release 控制完成时刻，保证测试能在命令执行中触发停机，而不用靠等待时间猜测。
 func (e *delayedExecutor) Exec([][]byte) (any, error) {
 	if e.calls.Add(1) == 1 {
 		close(e.started)
 	}
 	<-e.release
-	return true, nil
+	return database.StatusReply("OK"), nil
 }
 
 // TestShutdownDrainsInFlightReplyAndRejectsPipeline 发送两条粘连请求，在第一条执行中停机，再释放执行器。

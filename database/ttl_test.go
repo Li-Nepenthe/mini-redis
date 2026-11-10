@@ -1,3 +1,5 @@
+// 本文件：用 clockEngine 控制过期时刻，验证 TTL、索引和清理行为，并用并发与实际过期测试检查完整路径。
+
 package database
 
 import (
@@ -21,15 +23,14 @@ func clockEngine() (*Engine, *atomic.Int64) {
 	return e, &elapsed
 }
 
-// TestTTLSemantics 用可控时钟验证 TTL=-2/-1、秒数取整、到期边界、SET 清期限与零/负 EXPIRE 删除。
-// t 比较精确业务返回，没有墙上时钟等待；TTL 的取整是本项目显示规则，不替代精确存活判断。
+// TestTTLSemantics 直接推进时钟，区分 TTL 的显示取整和真正到期，并检查覆盖、立即删除时旧期限不会残留。
 func TestTTLSemantics(t *testing.T) {
 	e, elapsed := clockEngine()
 	requireExec(t, e, int64(-2), "TTL", "k")
-	requireExec(t, e, 0, "EXPIRE", "k", "5")
-	requireExec(t, e, true, "SET", "k", "v")
+	requireExec(t, e, int64(0), "EXPIRE", "k", "5")
+	requireExec(t, e, StatusReply("OK"), "SET", "k", "v")
 	requireExec(t, e, int64(-1), "TTL", "k")
-	requireExec(t, e, 1, "expire", "k", "5")
+	requireExec(t, e, int64(1), "expire", "k", "5")
 	requireExec(t, e, int64(5), "ttl", "k")
 	elapsed.Store(int64(400 * time.Millisecond))
 	requireExec(t, e, int64(5), "TTL", "k")
@@ -38,48 +39,46 @@ func TestTTLSemantics(t *testing.T) {
 	elapsed.Store(int64(5 * time.Second))
 	requireExec(t, e, nil, "GET", "k")
 	requireExec(t, e, int64(-2), "TTL", "k")
-	requireExec(t, e, true, "SET", "k", "v")
-	requireExec(t, e, 1, "EXPIRE", "k", "5")
-	requireExec(t, e, true, "SET", "k", "replacement")
+	requireExec(t, e, StatusReply("OK"), "SET", "k", "v")
+	requireExec(t, e, int64(1), "EXPIRE", "k", "5")
+	requireExec(t, e, StatusReply("OK"), "SET", "k", "replacement")
 	requireExec(t, e, int64(-1), "TTL", "k")
-	requireExec(t, e, 1, "EXPIRE", "k", "0")
+	requireExec(t, e, int64(1), "EXPIRE", "k", "0")
 	requireExec(t, e, int64(-2), "TTL", "k")
-	requireExec(t, e, true, "SET", "k", "v")
-	requireExec(t, e, 1, "EXPIRE", "k", "-1")
+	requireExec(t, e, StatusReply("OK"), "SET", "k", "v")
+	requireExec(t, e, int64(1), "EXPIRE", "k", "-1")
 	requireExec(t, e, nil, "GET", "k")
 }
 
-// TestExpiredKeysAreMissingForEveryCommand 为各命令重新构造刚到期的 String，验证它们都将过期 key 按缺失处理。
-// t 覆盖 GET/EXISTS/DEL/List/TTL/EXPIRE，包括 LPUSH 能对过期 String 新建 List；不依赖后台抽样完成。
+// TestExpiredKeysAreMissingForEveryCommand 每次重建过期值，让每条命令自己触发惰性删除，避免前一次读取代劳。
 func TestExpiredKeysAreMissingForEveryCommand(t *testing.T) {
 	for _, test := range []struct {
 		args []string
 		want any
 	}{
 		{[]string{"GET", "k"}, nil},
-		{[]string{"EXISTS", "k", "k"}, 0},
-		{[]string{"DEL", "k"}, 0},
-		{[]string{"LPUSH", "k", "new"}, 1},
+		{[]string{"EXISTS", "k", "k"}, int64(0)},
+		{[]string{"DEL", "k"}, int64(0)},
+		{[]string{"LPUSH", "k", "new"}, int64(1)},
 		{[]string{"LPOP", "k"}, nil},
 		{[]string{"LRANGE", "k", "0", "-1"}, [][]byte{}},
 		{[]string{"TTL", "k"}, int64(-2)},
-		{[]string{"EXPIRE", "k", "5"}, 0},
+		{[]string{"EXPIRE", "k", "5"}, int64(0)},
 	} {
 		e, elapsed := clockEngine()
-		requireExec(t, e, true, "SET", "k", "old string")
-		requireExec(t, e, 1, "EXPIRE", "k", "1")
+		requireExec(t, e, StatusReply("OK"), "SET", "k", "old string")
+		requireExec(t, e, int64(1), "EXPIRE", "k", "1")
 		elapsed.Store(int64(time.Second))
 		requireExec(t, e, test.want, test.args...)
 	}
 }
 
-// TestListKeepsTTLAndExpiryIndexIsConsistent 验证存活 List 推入/非末弹出保留 TTL，末弹出清 TTL，续期/删除维持反向索引。
-// t 用单线程可控时钟检查 expiring 与 expires 的长度和 index 一致；不在无锁条件下并发访问内部 map。
+// TestListKeepsTTLAndExpiryIndexIsConsistent 区分列表内容变化和 key 消失：前者保留期限，后者清掉期限与抽样索引。
 func TestListKeepsTTLAndExpiryIndexIsConsistent(t *testing.T) {
 	e, _ := clockEngine()
-	requireExec(t, e, 1, "LPUSH", "list", "a")
-	requireExec(t, e, 1, "EXPIRE", "list", "10")
-	requireExec(t, e, 2, "LPUSH", "list", "b")
+	requireExec(t, e, int64(1), "LPUSH", "list", "a")
+	requireExec(t, e, int64(1), "EXPIRE", "list", "10")
+	requireExec(t, e, int64(2), "LPUSH", "list", "b")
 	requireExec(t, e, int64(10), "TTL", "list")
 	requireExec(t, e, []byte("b"), "LPOP", "list")
 	requireExec(t, e, int64(10), "TTL", "list")
@@ -87,11 +86,11 @@ func TestListKeepsTTLAndExpiryIndexIsConsistent(t *testing.T) {
 	requireExec(t, e, int64(-2), "TTL", "list")
 	for i := 0; i < 40; i++ {
 		key := strconv.Itoa(i)
-		requireExec(t, e, true, "SET", key, "v")
-		requireExec(t, e, 1, "EXPIRE", key, "10")
-		requireExec(t, e, 1, "EXPIRE", key, "20")
+		requireExec(t, e, StatusReply("OK"), "SET", key, "v")
+		requireExec(t, e, int64(1), "EXPIRE", key, "10")
+		requireExec(t, e, int64(1), "EXPIRE", key, "20")
 		if i%2 == 0 {
-			requireExec(t, e, 1, "DEL", key)
+			requireExec(t, e, int64(1), "DEL", key)
 		}
 	}
 	for _, s := range e.shards {
@@ -162,8 +161,8 @@ func TestConcurrentExpirationAndCleanup(t *testing.T) {
 	workers.Wait()
 }
 
-// TestExpireHundredThousandKeysWithoutReads 写入 100000 个 256 字节值及 5 秒 TTL，不 GET，以内部数量观察主动过期在 30 秒预算内清空。
-// t 对比显式 GC 后的 HeapAlloc 并保留引擎存活；Short 模式跳过，worker 取消后等待。HeapAlloc 回落不是 OS 工作集回落证明。
+// TestExpireHundredThousandKeysWithoutReads 不读取写入的数据，让后台清理独自处理过期。
+// 清理前后都在 GC 后测活跃堆，只比较仍被引用的内存，不把它当作操作系统工作集。
 func TestExpireHundredThousandKeysWithoutReads(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real-time 100000-key active-expiry acceptance")
@@ -176,8 +175,8 @@ func TestExpireHundredThousandKeysWithoutReads(t *testing.T) {
 	value := string(make([]byte, 256))
 	for i := 0; i < 100000; i++ {
 		key := "expire-" + strconv.Itoa(i)
-		requireExec(t, e, true, "SET", key, value)
-		requireExec(t, e, 1, "EXPIRE", key, "5")
+		requireExec(t, e, StatusReply("OK"), "SET", key, value)
+		requireExec(t, e, int64(1), "EXPIRE", key, "5")
 	}
 	runtime.GC()
 	var before, after runtime.MemStats

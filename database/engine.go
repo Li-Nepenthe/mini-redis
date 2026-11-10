@@ -1,3 +1,5 @@
+// 本文件：Engine.Exec 分发命令；分片路由、有序加锁、列表结构和读命令为执行路径提供内存操作。
+
 package database
 
 import (
@@ -146,9 +148,8 @@ func (l *LinkedList) LPop() ([]byte, bool) {
 	return node.val, true
 }
 
-// Exec 将 args[0] 的命令名转为大写并分发；其余参数保持二进制内容，调用期间调用者不能并发修改 args。
-// 返回状态/字节/整数/字节数组或 nil，以及参数、类型、未知命令或持久化错误；响应编码由 resp 包负责。
-// 写命令走统一 prepare→日志确认→apply，读命令按需惰性清理过期 key；不向客户端开放私有 AOF 命令。
+// Exec 只接受公开命令，私有 AOF 标记只能经 Replay 恢复，不能让客户端绕过命令语义。
+// 统一命令名的大小写，但保留 key 和值的原始字节；调用期间参数不能被并发修改。
 func (e *Engine) Exec(args [][]byte) (any, error) {
 	if len(args) == 0 {
 		return nil, ErrUnknownCmd
@@ -202,27 +203,15 @@ func (e *Engine) get(args [][]byte) (any, error) {
 	return bytes.Clone(result), nil
 }
 
-// LPush 将包含命令名、key 和至少一个值的 args 交给统一 LPUSH 写路径，返回更新后的长度或错误。
-// 命令名由此入口固定为 LPUSH；顺序插入每个值，后给的值位于更靠前位置。类型检查、TTL 与 AOF 副作用由 executeWrite 统一处理。
-func (e *Engine) LPush(args [][]byte) (any, error) {
-	return e.executeWrite(args, "LPUSH")
-}
-
-// LPop 将包含命令名和一个 key 的 args 交给统一 LPOP 写路径，返回移除的头值、缺失时 nil 或业务/日志错误。
-// 非空 List 移除末节点时同时删除 key 与 TTL；参数和类型校验、先日志后修改的确认边界由 executeWrite 处理。
-func (e *Engine) LPop(args [][]byte) (any, error) {
-	return e.executeWrite(args, "LPOP")
-}
-
-// exists 执行 EXISTS，对 args[1:] 的每个 key 判断是否存活并返回 int 计数；重复的存活 key 重复计数。
-// 无 key 返回参数错误。按有序分片写锁保护整条命令，因为存在性检查可能惰性删除过期值及 TTL，不记录这种清理到 AOF。
+// exists 按参数逐个计数，重复的存活 key 也重复计算；这和 DEL 只计算实际删除数不同。
+// 判断存在性可能清理过期值，所以整条命令使用有序分片写锁。
 func (e *Engine) exists(args [][]byte) (any, error) {
 	if len(args) < 2 {
 		return nil, wrongArgs("exists")
 	}
 	unlock := e.lockKeys(args[1:], true)
 	defer unlock()
-	count := 0
+	var count int64
 	now := e.now()
 	for _, arg := range args[1:] {
 		key := string(arg)

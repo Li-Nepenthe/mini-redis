@@ -1,3 +1,5 @@
+// 本文件：经真实 AOF 文件检查恢复、截断、锁和写入顺序；faultFile 与自有子进程分别制造存储失败和强制退出。
+
 package aof
 
 import (
@@ -57,17 +59,16 @@ func openEngine(t *testing.T, path string) (*database.Engine, *Store) {
 	return engine, store
 }
 
-// TestReplayStringListDeleteAndTTL 验证 String 二进制值、DEL、List 顺序/弹出和绝对 TTL 在真实临时 AOF 重开后恢复。
-// 由 t 记录断言，无返回值；短暂等待后确认 TTL 不从重启重新计时，最后过期不可见，文件由测试清理。
+// TestReplayStringListDeleteAndTTL 两次重开真实文件，确认字符串、列表和删除结果能恢复，TTL 也不会从重启时重新计时。
 func TestReplayStringListDeleteAndTTL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "appendonly.aof")
 	engine, store := openEngine(t, path)
-	execute(t, engine, true, "SET", "binary", "a\x00\r\nb")
-	execute(t, engine, true, "SET", "deleted", "v")
-	execute(t, engine, 1, "DEL", "deleted")
-	execute(t, engine, 3, "LPUSH", "list", "a", "b", "c")
+	execute(t, engine, database.StatusReply("OK"), "SET", "binary", "a\x00\r\nb")
+	execute(t, engine, database.StatusReply("OK"), "SET", "deleted", "v")
+	execute(t, engine, int64(1), "DEL", "deleted")
+	execute(t, engine, int64(3), "LPUSH", "list", "a", "b", "c")
 	execute(t, engine, []byte("c"), "LPOP", "list")
-	execute(t, engine, 1, "EXPIRE", "list", "2")
+	execute(t, engine, int64(1), "EXPIRE", "list", "2")
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -88,14 +89,13 @@ func TestReplayStringListDeleteAndTTL(t *testing.T) {
 	execute(t, restored, int64(-2), "TTL", "list")
 }
 
-// TestExpiredListWithLaterPushDoesNotResurrectOnReopen 验证期限内追加的 List 在整体过期后重开 AOF 不会丢 TTL 而复活。
-// 真实临时文件与 1.1 秒等待复现历史期限错误；t 比较 TTL=-2 和空 LRANGE，不测试过期后的重新创建分支。
+// TestExpiredListWithLaterPushDoesNotResurrectOnReopen 让列表在期限内追加、期限后重放，检查追加不会让旧列表丢掉 TTL 而复活。
 func TestExpiredListWithLaterPushDoesNotResurrectOnReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "appendonly.aof")
 	engine, store := openEngine(t, path)
-	execute(t, engine, 1, "LPUSH", "list", "a")
-	execute(t, engine, 1, "EXPIRE", "list", "1")
-	execute(t, engine, 2, "LPUSH", "list", "b")
+	execute(t, engine, int64(1), "LPUSH", "list", "a")
+	execute(t, engine, int64(1), "EXPIRE", "list", "1")
+	execute(t, engine, int64(2), "LPUSH", "list", "b")
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -106,8 +106,7 @@ func TestExpiredListWithLaterPushDoesNotResurrectOnReopen(t *testing.T) {
 	execute(t, restored, [][]byte{}, "LRANGE", "list", "0", "-1")
 }
 
-// TestMaximumSizedLPUSHFitsPersistedCreationRecord 构造恰好 32MiB 的合法 LPUSH，验证新建 _LNEW 落盘不扩大帧预算。
-// 注入内存 faultFile 而非真实大文件，t 检查返回长度与确认 size，避免仅靠改宽解析上限掩盖持久化编码问题。
+// TestMaximumSizedLPUSHFitsPersistedCreationRecord 把 LPUSH 填到协议上限，检查新建标记仍能落盘，不能靠放宽上限掩盖记录变大的问题。
 func TestMaximumSizedLPUSHFitsPersistedCreationRecord(t *testing.T) {
 	request := [][]byte{[]byte("LPUSH"), []byte("max"),
 		make([]byte, resp.MaxBulkLength), make([]byte, resp.MaxBulkLength-128)}
@@ -124,13 +123,12 @@ func TestMaximumSizedLPUSHFitsPersistedCreationRecord(t *testing.T) {
 	store := &Store{file: &faultFile{}}
 	engine.AttachLog(store)
 	result, err := engine.Exec(request)
-	if err != nil || result != 2 || store.size != resp.MaxRequestLength {
+	if err != nil || result != int64(2) || store.size != resp.MaxRequestLength {
 		t.Fatalf("maximum LPUSH result=%v err=%v persisted=%d", result, err, store.size)
 	}
 }
 
-// TestRecoverOnlyIncompleteTailWithActualOffsets 验证非规范数字头的完整前缀按真实字节保留，仅截断各种不完整尾部。
-// t 在临时文件检查恢复字节数、文件长度及后续追加再重放的数据，不用重新编码长度冒充原偏移。
+// TestRecoverOnlyIncompleteTailWithActualOffsets 用带前导零的数字头区分真实偏移和重新编码后的长度，避免恢复时截错位置。
 func TestRecoverOnlyIncompleteTailWithActualOffsets(t *testing.T) {
 	for _, tail := range []string{"*3\r\n$3\r\nSET\r\n$4\r\ntail\r\n$5\r\nabc", "*1", "*1\r\n$4"} {
 		path := filepath.Join(t.TempDir(), "appendonly.aof")
@@ -147,7 +145,7 @@ func TestRecoverOnlyIncompleteTailWithActualOffsets(t *testing.T) {
 		if err != nil || info.Size() != int64(len(prefix)) {
 			t.Fatalf("recovered file size=%v err=%v", info, err)
 		}
-		execute(t, engine, true, "SET", "next", "ok")
+		execute(t, engine, database.StatusReply("OK"), "SET", "next", "ok")
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
 		}
