@@ -1,102 +1,70 @@
+// 本文件：main 选择服务器地址，runClient 顺序发送命令并显示完整回复；输入按空白拆分，不支持带空格的值或引号转义。
+
 package main
 
 import (
 	"bufio"
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
-	"strconv"
 	"strings"
+
+	"github.com/Li-Nepenthe/mini-redis/resp"
 )
 
-// main 启动教学交互客户端，连接固定的 127.0.0.1:6379，将标准输入按空白拆词并编码为 RESP 请求。
-// 逐次发送后显示简单状态/错误/bulk 或首行原始回复；exit、输入结束、发送或首行读取错误退出循环并关闭连接，没有返回值。
-// bulk 的 ReadFull 失败打印错误后只退出 switch，外层输入循环仍继续；这是现有教学客户端的限制。
-// 它不支持带空格/引号的完整参数解析，也不消费完整数组回复，不应作为 List、流水线或兼容性验收工具。
 func main() {
-	conn, err := net.Dial("tcp", "127.0.0.1:6379")
+	addr := flag.String("addr", "127.0.0.1:6379", "Mini-Redis server address")
+	flag.Parse()
+	conn, err := net.Dial("tcp", *addr)
 	if err != nil {
 		fmt.Println("拨号失败:", err)
 		return
 	}
 	defer conn.Close()
 	fmt.Println("=== 交互式 Mini-Redis 客户端已启动 (输入 exit 退出) ===")
+	if err := runClient(conn, os.Stdin, os.Stdout); err != nil {
+		fmt.Println("客户端结束:", err)
+	}
+}
 
-	osReader := bufio.NewReader(os.Stdin) //读取键盘的输入
-	netReader := bufio.NewReader(conn)    // 读取连接传来的输入
-
+// 每次发送后必须消费完整回复再接收下一条输入，否则数组元素会被误当成下一条命令的结果。
+func runClient(conn net.Conn, input io.Reader, output io.Writer) error {
+	stdin, replies := bufio.NewReader(input), bufio.NewReader(conn)
 	for {
-		fmt.Print("mini-redis> ")
-
-		text, err := osReader.ReadString('\n')
+		fmt.Fprint(output, "mini-redis> ")
+		line, err := stdin.ReadString('\n')
+		if err == io.EOF {
+			return nil
+		}
 		if err != nil {
-			break
+			return err
 		}
-
-		text = strings.TrimSpace(text)
-		if text == "exit" {
-			break
-		}
-		if text == "" {
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
 			continue
 		}
-
-		parts := strings.Fields(text)
-		length := len(parts)
-
-		var sb strings.Builder
-		sb.WriteString("*" + strconv.Itoa(length) + "\r\n")
-		for _, part := range parts {
-			sb.WriteString("$" + strconv.Itoa(len(part)) + "\r\n")
-			sb.WriteString(part + "\r\n")
+		if len(parts) == 1 && parts[0] == "exit" {
+			return nil
 		}
-
-		payload := []byte(sb.String())
-		_, err = conn.Write(payload)
+		args := make([][]byte, len(parts))
+		for i, part := range parts {
+			args[i] = []byte(part)
+		}
+		request, err := resp.AppendRequest(nil, args)
 		if err != nil {
-			fmt.Println("发送失败:", err)
-			break
-		}
-
-		// 读出服务端回包的第一行（以 \n 结尾）
-		replyLine, err := netReader.ReadBytes('\n')
-		if err != nil {
-			fmt.Println("读取服务端响应失败，可能连接已被断开:", err)
-			break
-		}
-
-		replyLine = bytes.TrimSuffix(replyLine, []byte("\r\n"))
-		if len(replyLine) == 0 {
+			fmt.Fprintln(output, "请求无效:", err)
 			continue
 		}
-
-		// 该学习客户端只显示简单回复，不作为完整数组/命令兼容性验收工具。
-		switch replyLine[0] {
-		case '+': // 状态回复
-			fmt.Printf("状态：%s\n", string(replyLine[1:]))
-		case '-': // 错误回复
-			fmt.Printf("（错误）%s\n", string(replyLine[1:]))
-		case '$': // 块字符串回复
-			length, _ := strconv.Atoi(string(replyLine[1:]))
-			if length == -1 {
-				fmt.Println("（空值）")
-			} else {
-				// bulk 以字节长度分帧，内容中的换行不能作为结束标记。
-				contentBuf := make([]byte, length+2)
-
-				// TCP 一次 Read 不保证读满，ReadFull 才能取完这一帧。
-				_, err = io.ReadFull(netReader, contentBuf)
-				if err != nil {
-					fmt.Println("网络流读取残缺，强制中断:", err)
-					break
-				}
-
-				fmt.Printf("\"%s\"\n", string(contentBuf[:length]))
-			}
-		default:
-			fmt.Printf("原始响应：%s\n", string(replyLine))
+		if _, err := io.Copy(conn, bytes.NewReader(request)); err != nil {
+			return fmt.Errorf("发送请求: %w", err)
 		}
+		reply, err := readReply(replies)
+		if err != nil {
+			return fmt.Errorf("读取回复: %w", err)
+		}
+		fmt.Fprintln(output, reply)
 	}
 }
