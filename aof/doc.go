@@ -6,7 +6,8 @@
 // 文件分工如下：
 //   - doc.go：本包导航。
 //   - store.go：顺序恢复、半条尾部修复、追加确认和失败回滚。
-//   - lock_linux.go：Linux 独占文件锁。
+//   - lock_unix.go：Linux 和 macOS 独占文件锁。
 //   - lock_windows.go：Windows 独占文件锁。
+//   - lock_other.go：其余平台明确拒绝启用 AOF。
 //   - store_test.go：旧记录、恢复边界、文件故障、锁和崩溃重启。
 package aof
