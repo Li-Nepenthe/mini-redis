@@ -7,6 +7,9 @@ import (
 	"sync"
 )
 
+// expiring 额外保存带期限的 key，让后台清理能在 O(1) 时间随机取样；只用 map 做不到。
+// expires 中的 expiration.index 记录 key 在 expiring 里的位置，供删除时用末项补洞。
+// 修改数据或过期索引时，调用者必须持有分片写锁。
 type shard struct {
 	mu       sync.RWMutex
 	data     map[string]any

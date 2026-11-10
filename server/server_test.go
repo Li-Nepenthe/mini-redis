@@ -5,7 +5,6 @@ package server
 import (
 	"bufio"
 	"errors"
-	"github.com/Li-Nepenthe/mini-redis/database"
 	"io"
 	"net"
 	"runtime"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
 func startServer(t *testing.T) (*Server, net.Listener, <-chan error) {

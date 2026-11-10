@@ -6,8 +6,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/Li-Nepenthe/mini-redis/database"
 	"testing"
+
+	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
 type testPublicError struct{ code, message string }

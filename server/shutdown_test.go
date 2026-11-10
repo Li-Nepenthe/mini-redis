@@ -4,13 +4,14 @@ package server
 
 import (
 	"context"
-	"github.com/Li-Nepenthe/mini-redis/database"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
 type delayedExecutor struct {
@@ -26,6 +27,45 @@ func (e *delayedExecutor) Exec([][]byte) (any, error) {
 	}
 	<-e.release
 	return database.StatusReply("OK"), nil
+}
+
+// 只发一条请求，客户端收完回复后保持连接打开，确保退出依赖写完后的停机检查，而非下一次读取或客户端断连。
+func TestShutdownDrainsSingleInFlightReply(t *testing.T) {
+	executor := &delayedExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	s := NewServer("", executor)
+	var release sync.Once
+	defer func() { release.Do(func() { close(executor.release) }); _ = s.Close() }()
+	conn, client := net.Pipe()
+	defer client.Close()
+	_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+	s.startConnection(conn)
+	if _, err := io.WriteString(client, setRequest); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-executor.started:
+	case <-time.After(time.Second):
+		t.Fatal("SET did not start")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	stopped := make(chan error, 1)
+	start := time.Now()
+	go func() { stopped <- s.Shutdown(ctx) }()
+	waitFor(t, "shutdown did not start", func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.stopping
+	})
+	release.Do(func() { close(executor.release) })
+	reply := make([]byte, len("+OK\r\n"))
+	if _, err := io.ReadFull(client, reply); err != nil || string(reply) != "+OK\r\n" {
+		t.Fatalf("in-flight reply=%q error=%v", reply, err)
+	}
+	err := awaitError(t, stopped)
+	if elapsed := time.Since(start); err != nil || elapsed >= time.Second {
+		t.Fatalf("Shutdown() = %v after %s; want nil within 1s", err, elapsed)
+	}
 }
 
 // 在第一条命令被执行器阻塞时停机，等待监听器真正关闭后再放行，确保缓冲中的第二条请求没有越过停机入口。

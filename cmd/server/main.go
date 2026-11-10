@@ -7,9 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/Li-Nepenthe/mini-redis/aof"
-	"github.com/Li-Nepenthe/mini-redis/database"
-	"github.com/Li-Nepenthe/mini-redis/server"
 	"log"
 	"net"
 	"os"
@@ -17,6 +14,10 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/aof"
+	"github.com/Li-Nepenthe/mini-redis/database"
+	"github.com/Li-Nepenthe/mini-redis/server"
 )
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 }
 
 // 先占端口再恢复日志，避免重复启动时触碰正在服务的 AOF。
-// 启动者拥有清理循环与信号观察工作；网络停止后先等后台退出，再关闭日志，防止最后的写入落到已关闭的文件。
+// 启动者拥有清理循环与等待信号的 goroutine；网络停止后先等后台退出，再关闭日志，防止最后的写入落到已关闭的文件。
 func run(ctx context.Context, addr, aofPath string) (runErr error) {
 	if ctx.Err() != nil {
 		return nil
@@ -74,7 +75,7 @@ func run(ctx context.Context, addr, aofPath string) (runErr error) {
 		cancel()
 		<-cleanupDone
 	}()
-	// Serve 返回后仍等待信号观察工作退出，再回收后台与日志。
+	// Serve 返回后，仍需确认等待信号的 goroutine 已退出，再回收后台与日志。
 	network := server.NewServer(addr, dbEngine)
 	watchStop, watchDone := make(chan struct{}), make(chan struct{})
 	go func() {

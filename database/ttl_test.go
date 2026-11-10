@@ -82,6 +82,9 @@ func TestListKeepsTTLAndExpiryIndexIsConsistent(t *testing.T) {
 	requireExec(t, e, []byte("b"), "LPOP", "list")
 	requireExec(t, e, int64(10), "TTL", "list")
 	requireExec(t, e, []byte("a"), "LPOP", "list")
+	if _, exists := e.getShard("list").expires["list"]; exists {
+		t.Fatal("LPOP left an expiry entry after removing the last element")
+	}
 	requireExec(t, e, int64(-2), "TTL", "list")
 	for i := 0; i < 40; i++ {
 		key := strconv.Itoa(i)

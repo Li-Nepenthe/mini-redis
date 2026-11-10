@@ -4,13 +4,14 @@ package main
 
 import (
 	"context"
-	"github.com/Li-Nepenthe/mini-redis/aof"
-	"github.com/Li-Nepenthe/mini-redis/database"
 	"io"
 	"net"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/aof"
+	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
 // 先等 SET 的确认回复，再触发停机；重开日志能恢复值并取得锁，才说明确认写和资源释放都完成了。

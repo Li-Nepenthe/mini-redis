@@ -4,7 +4,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -58,7 +57,7 @@ func runClient(conn net.Conn, input io.Reader, output io.Writer) error {
 			fmt.Fprintln(output, "请求无效:", err)
 			continue
 		}
-		if _, err := io.Copy(conn, bytes.NewReader(request)); err != nil {
+		if _, err := conn.Write(request); err != nil {
 			return fmt.Errorf("发送请求: %w", err)
 		}
 		reply, err := readReply(replies)

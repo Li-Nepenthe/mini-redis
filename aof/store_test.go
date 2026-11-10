@@ -8,8 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Li-Nepenthe/mini-redis/database"
-	"github.com/Li-Nepenthe/mini-redis/resp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +17,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/database"
+	"github.com/Li-Nepenthe/mini-redis/resp"
 )
 
 func args(parts ...string) [][]byte {

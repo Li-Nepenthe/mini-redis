@@ -19,7 +19,7 @@ type Server struct {
 	executor Executor
 	mu       sync.Mutex
 	listener net.Listener
-	conns    map[net.Conn]bool // true 覆盖命令执行和完整回复写入，两者都属于排空范围。
+	conns    map[net.Conn]bool // true 表示正在执行命令或写回复，停机等它写完；false 表示空闲，停机直接关闭。
 	stopping bool
 	wg       sync.WaitGroup
 	shutdown sync.Once
@@ -106,7 +106,7 @@ func (s *Server) stopConnections() (net.Listener, map[net.Conn]bool) {
 	return s.listener, conns
 }
 
-// Shutdown 只排空已经开始的命令；空闲连接立即关闭，正在执行的连接获得写截止时间。
+// Shutdown 立即关闭空闲连接，等执行中的连接写完回复；ctx 结束时强制关闭剩余连接。
 // 第一次调用确定排空期限和结果。超时只表示等待结束，不能冒充任意 Exec 或 fsync 已经停止。
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.shutdown.Do(func() {
@@ -116,8 +116,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		for conn, active := range conns {
 			if !active {
 				_ = conn.Close()
-			} else if deadline, ok := ctx.Deadline(); ok {
-				_ = conn.SetWriteDeadline(deadline)
 			}
 		}
 		finished := make(chan struct{})

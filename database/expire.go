@@ -20,7 +20,7 @@ const (
 	cleanupReclaimInterval = 5 * time.Second
 )
 
-// 续期只改期限，避免同一个 key 重复进入抽样池；调用者须持分片写锁。
+// 续期只改期限，避免同一个 key 重复进入抽样池。
 func (s *shard) setExpiration(key string, deadline time.Time) {
 	if old, ok := s.expires[key]; ok {
 		old.deadline = deadline
@@ -31,8 +31,7 @@ func (s *shard) setExpiration(key string, deadline time.Time) {
 	s.expiring = append(s.expiring, key)
 }
 
-// 抽样池没有顺序要求，用末项补洞并修正反向下标，就能在 O(1) 时间移除期限。
-// 清空旧末项，避免底层数组继续持有已删除的 key；调用者须持分片写锁。
+// 抽样池没有顺序要求，用末项补洞并修正下标就能 O(1) 删除；清空旧末项，避免底层数组继续持有已删 key。
 func (s *shard) clearExpiration(key string) {
 	old, ok := s.expires[key]
 	if !ok {
@@ -51,7 +50,7 @@ func (s *shard) clearExpiration(key string) {
 	}
 }
 
-// 数据和过期索引必须一起删除。清理不写日志，恢复依靠绝对期限和新建列表标记；调用者须持分片写锁。
+// 数据和过期索引必须一起删除。清理不写日志，恢复依靠绝对期限和新建列表标记。
 func (s *shard) purgeExpired(key string, now time.Time) bool {
 	entry, ok := s.expires[key]
 	if !ok || now.Before(entry.deadline) {

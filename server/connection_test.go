@@ -16,6 +16,36 @@ type executorFunc func([][]byte) (any, error)
 
 func (f executorFunc) Exec(args [][]byte) (any, error) { return f(args) }
 
+// 只封住执行入口，不调用 Shutdown 或关闭连接，让测试单独检验读到请求后的停机检查。
+func TestConnectionRejectsRequestAfterStopping(t *testing.T) {
+	var calls atomic.Int32
+	s := NewServer("", executorFunc(func([][]byte) (any, error) {
+		calls.Add(1)
+		return database.StatusReply("OK"), nil
+	}))
+	defer s.Close()
+	conn, client := net.Pipe()
+	defer client.Close()
+	_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+	if !s.startConnection(conn) {
+		t.Fatal("connection was not registered")
+	}
+	s.mu.Lock()
+	s.stopping = true
+	s.mu.Unlock()
+	if _, err := io.WriteString(client, setRequest); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 1)
+	n, err := client.Read(reply)
+	if got := calls.Load(); got != 0 {
+		t.Errorf("executor calls = %d; want 0 after stopping", got)
+	}
+	if n != 0 || err != io.EOF {
+		t.Fatalf("read after stopping = %q, %v; want EOF", reply[:n], err)
+	}
+}
+
 // 两种失败都发生在真实读取之后；连接退出时必须注销，且不能执行缓冲里剩下的请求。
 func TestConnectionEarlyReturnReleasesResources(t *testing.T) {
 	for _, name := range []string{"write failure", "encode failure"} {

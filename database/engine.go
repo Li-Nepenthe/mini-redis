@@ -54,15 +54,12 @@ func (e *Engine) Exec(args [][]byte) (any, error) {
 			return bytes.Clone(args[1]), nil
 		}
 		return nil, wrongArgs("ping")
-
 	case "GET":
 		return e.get(args)
-
 	case "EXISTS":
 		return e.exists(args)
 	case "LRANGE":
 		return e.lrange(args)
-
 	case "TTL":
 		return e.ttl(args)
 	default:

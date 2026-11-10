@@ -7,11 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Li-Nepenthe/mini-redis/resp"
 	"io"
 	"log"
 	"os"
 	"sync"
+
+	"github.com/Li-Nepenthe/mini-redis/resp"
 )
 
 type logFile interface {

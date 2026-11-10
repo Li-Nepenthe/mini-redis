@@ -11,6 +11,9 @@ import (
 	"github.com/Li-Nepenthe/mini-redis/resp"
 )
 
+// 每个连接由一个 goroutine 同步地读一条、执行一条、写回一条；空闲时阻塞的 Read 靠 Shutdown 关闭连接打断。
+// 执行前检查停机，拦住停机开始后才读到的请求。
+// 写完后再检查一次，让刚写完回复的连接自行退出，因为 Shutdown 正常排空时不会关闭执行中的连接。
 func (s *Server) handle(conn net.Conn) {
 	defer func() {
 		_ = conn.Close()
@@ -28,7 +31,6 @@ func (s *Server) handle(conn net.Conn) {
 		if readErr == nil && len(args) == 0 {
 			continue
 		}
-		// 与停机共用这道门：预读到请求不等于已经开始执行。
 		s.mu.Lock()
 		if s.stopping {
 			s.mu.Unlock()
