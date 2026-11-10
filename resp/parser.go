@@ -18,10 +18,9 @@ const (
 	MaxRequestLength = 32 << 20
 )
 
-// 头部必须有界，避免恶意的无换行输入无限扩容。
+// 头部用固定缓冲区读取，遇到恶意无换行输入也不会无限扩容。
 // 完全没有字节的 EOF 与残头分开返回，AOF 才能区分文件结束和半条尾部。
 func readHeader(reader *bufio.Reader) ([]byte, error) {
-	// ReadBytes 会随恶意无换行输入扩容；固定缓冲的 ReadSlice 能在达到上限时停止。
 	line, err := reader.ReadSlice('\n')
 	if errors.Is(err, bufio.ErrBufferFull) || len(line) > MaxHeaderLength {
 		return nil, fmt.Errorf("protocol error: header exceeds %d bytes", MaxHeaderLength)

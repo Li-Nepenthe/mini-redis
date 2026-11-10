@@ -212,7 +212,6 @@ func TestParserFragmentedInput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			// Pipe 允许分段发送并阻塞读取，才能覆盖真正的半包等待。
 			reader, writer := io.Pipe()
 			defer reader.Close()
 			go func() {
@@ -223,7 +222,7 @@ func TestParserFragmentedInput(t *testing.T) {
 						return
 					}
 				}
-				_ = writer.Close() // 手动关闭后触发EOF
+				_ = writer.Close()
 			}()
 
 			buffer := bufio.NewReader(reader)

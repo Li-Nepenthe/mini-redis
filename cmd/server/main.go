@@ -19,8 +19,6 @@ import (
 	"time"
 )
 
-// main 解析 -addr/-aof 参数，订阅 Ctrl+C/SIGTERM，并将信号 context 交给 run 启动服务。
-// -aof 为空关闭持久化；run 返回错误时记录并退出进程。正常退出取消信号订阅，无业务返回值。
 func main() {
 	addr := flag.String("addr", ":6379", "TCP listen address")
 	aofPath := flag.String("aof", "data/appendonly.aof", "AOF file; empty disables persistence")
@@ -38,7 +36,6 @@ func run(ctx context.Context, addr, aofPath string) (runErr error) {
 	if ctx.Err() != nil {
 		return nil
 	}
-	// 先占端口再开 AOF，重复启动失败时不能触碰正在运行服务的日志。
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
@@ -72,13 +69,12 @@ func run(ctx context.Context, addr, aofPath string) (runErr error) {
 		defer close(cleanupDone)
 		dbEngine.RunCleanup(ctx)
 	}()
-	// defer 后注册先执行：先 cancel+等待清理，再执行前面注册的 Store.Close。
-	// 生命周期由启动者收束，不能把“发出了取消”当成“后台已经退出”。
+	// 先等后台真正退出，再关日志；只发出取消信号不足以完成回收。
 	defer func() {
 		cancel()
 		<-cleanupDone
 	}()
-	// Serve 结束前等待停机完成；其后的 defer 才会关闭清理工作与 AOF。
+	// Serve 返回后仍等待信号观察工作退出，再回收后台与日志。
 	network := server.NewServer(addr, dbEngine)
 	watchStop, watchDone := make(chan struct{}), make(chan struct{})
 	go func() {

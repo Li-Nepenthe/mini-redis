@@ -28,8 +28,7 @@ func (e *delayedExecutor) Exec([][]byte) (any, error) {
 	return database.StatusReply("OK"), nil
 }
 
-// TestShutdownDrainsInFlightReplyAndRejectsPipeline 发送两条粘连请求，在第一条执行中停机，再释放执行器。
-// t 验证 listener 关闭、只完成第一回复、第二命令不执行、连接 EOF 与 Serve/Shutdown 都结束；用专用通道确定时序。
+// 在第一条命令被执行器阻塞时停机，等待监听器真正关闭后再放行，确保缓冲中的第二条请求没有越过停机入口。
 func TestShutdownDrainsInFlightReplyAndRejectsPipeline(t *testing.T) {
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

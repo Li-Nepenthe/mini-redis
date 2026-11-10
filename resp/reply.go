@@ -16,7 +16,7 @@ type publicError interface {
 
 // EncodeReply 让执行结果的类型直接决定协议类型：实现 RESPStatus 的值输出简单状态，
 // int64 输出整数，[]byte 输出 bulk，[][]byte 输出数组，nil 输出空值。
-// bool 和普通 string 没有约定的协议含义，不能猜测它们是否代表 OK 或一段二进制数据。
+// bool、int 和普通 string 没有约定的协议含义，不能猜测它们是否代表状态、整数或二进制数据。
 // 业务错误只公开 RESPError 的内容；其余错误统一隐藏，防止内部细节进入客户端回复。
 func EncodeReply(result any, execErr error) ([]byte, error) {
 	if execErr != nil {

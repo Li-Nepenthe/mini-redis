@@ -1,6 +1,6 @@
 // 本文件：说明本包职责、阅读入口和各文件分工。
 
-// Package resp 负责RESP 请求和回复的字节转换。
+// Package resp 负责 RESP 请求和回复的字节转换。
 // 从 parser.go 的 ReadRequest 读起，再看 request.go 的请求编码和 reply.go 的回复编码。连接与停机由 server 包负责。
 //
 // 文件分工如下：

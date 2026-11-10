@@ -22,7 +22,6 @@ type Engine struct {
 // 状态与二进制数据使用不同类型，避免 OK/PONG 被误编码成 bulk。
 type StatusReply string
 
-// 让协议层识别状态回复，避免把 OK/PONG 当作二进制值。
 func (s StatusReply) RESPStatus() string { return string(s) }
 
 // 分片数必须是非零的 2 的幂，路由才能用掩码取余；日志绑定和清理循环由启动者安排。

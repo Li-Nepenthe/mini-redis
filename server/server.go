@@ -136,6 +136,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // Close 强制打断所有连接的 I/O，再等实际工作退出；若执行器仍阻塞，这里也必须继续等待。
+// 等待完成后只报告资源关闭错误，过去的排空超时仍由 Shutdown 保留。
 func (s *Server) Close() error {
 	_, conns := s.stopConnections()
 	for conn := range conns {

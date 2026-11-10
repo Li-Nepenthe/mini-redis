@@ -1,3 +1,5 @@
+// 本文件：TestCommandReplyEncoding 直接编码引擎结果与受控错误，验证回复字节和内部错误的公开边界。
+
 package resp
 
 import (
@@ -10,16 +12,12 @@ import (
 
 type testPublicError struct{ code, message string }
 
-// Error 返回固定内部错误文字，供公开错误测试证明编码器不直接输出 error 的文本。
-// 不使用 code/message、不修改对象；实际公开字段由 RESPError 提供。
+// 让内部文本与公开消息不同，便于发现编码器误把内部错误交给客户端。
 func (e testPublicError) Error() string { return "private error chain" }
 
-// RESPError 返回模拟对象的 code/message，允许测试注入换行或非法码检查公开错误边界。
-// 不清洗输入也不修改对象，清洗/拒绝责任在 EncodeReply，Error 文本仍保持私有。
 func (e testPublicError) RESPError() (string, string) { return e.code, e.message }
 
-// TestCommandReplyEncoding 验证状态、数组、二进制、int64、公开/包装/内部错误及换行注入的准确 RESP 字节。
-// t 还断言状态换行产生编码错误；业务错误能编码为回复不等于编码器本身出错，无网络副作用。
+// 同时放入包装错误、内部路径和换行注入，检查编码器只公开允许的字段，并且每个错误只占一行。
 func TestCommandReplyEncoding(t *testing.T) {
 	for _, test := range []struct {
 		name   string

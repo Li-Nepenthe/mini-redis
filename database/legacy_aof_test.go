@@ -83,7 +83,7 @@ func TestLegacyAOFGolden(t *testing.T) {
 		if execErr != nil {
 			t.Fatalf("%q: %v", parts, execErr)
 		}
-		// 比较 RESP 回复，不绑定 int 或 int64 等内部表示，后续统一回复类型时基线仍有效。
+		// 比较恢复状态的 RESP 字节，让基线对应外部可见结果，不绑定引擎内部的值类型。
 		reply, err := resp.EncodeReply(result, nil)
 		if err != nil {
 			t.Fatal(err)

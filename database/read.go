@@ -24,7 +24,6 @@ func (e *Engine) get(args [][]byte) (any, error) {
 	if !ok {
 		return nil, ErrTypeMismatch
 	}
-	// 回复离开锁后仍会被编码/使用，所以不能把存储内部字节直接交给调用者。
 	return bytes.Clone(result), nil
 }
 

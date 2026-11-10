@@ -72,7 +72,6 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 			if !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
 				return nil, fmt.Errorf("invalid AOF at byte %d: %w", offset, readErr)
 			}
-			// 只恢复不完整尾部；完整坏记录不能自动截断，否则可能静默丢掉已确认数据。
 			if err := file.Truncate(offset); err != nil {
 				return nil, fmt.Errorf("truncate AOF tail: %w", err)
 			}
@@ -132,7 +131,6 @@ func (s *Store) Append(args [][]byte) error {
 // 故障后尽力回到最后确认的位置，并保留原始错误和回滚错误。
 // 即使回滚成功也不能当作自动恢复，否则后续写入会掩盖磁盘故障；调用者须持 Store.mu。
 func (s *Store) fail(cause error) error {
-	// 尽力回滚到上次确认的前缀；即使回滚成功也持续拒绝写入，避免掩盖存储故障。
 	truncateErr := s.file.Truncate(s.size)
 	syncErr := s.file.Sync()
 	s.failed = fmt.Errorf("append AOF: %w", errors.Join(cause, truncateErr, syncErr))

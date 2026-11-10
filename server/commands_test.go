@@ -1,4 +1,4 @@
-// 本文件：在同一 TCP 连接连续执行命令，检查业务错误后连接仍可用且回复保持对齐。
+// 本文件：request 构造原始请求，TestTwentyCommandsOnOneConnection 在真实连接上检查连续命令及错误后的回复边界。
 
 package server
 
