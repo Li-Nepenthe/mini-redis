@@ -2,124 +2,148 @@
 
 [![CI](https://github.com/Li-Nepenthe/mini-redis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Li-Nepenthe/mini-redis/actions/workflows/ci.yml)
 
-用 Go 实现的 RESP2 子集单机内存数据库，用于学习网络、协议、并发和持久化的工程取舍。
+用 Go 写的单机内存数据库，兼容 Redis 的 RESP2 协议和 10 条常用命令。它是一个学习项目：用一个能跑、能用 `redis-cli` 连上的服务，把 Go 的并发、协议解析、持久化和测试串起来。
 
-## 当前状态
-
-P1 的 S1–S5 工程验收完成；S6 的代码/Docker/停机与复审修复已通过，PR #1 已合并为 main@84d3c8c，合并后的 CI 全绿，默认首页已显示此项目文档。仍待仓库 description/topics 的可用写入口与本人七项口述，不能宣称个人学习封版。P2 的 AI 后端（原 `ai-backend/` 目录，2026-10-15 已拆为与本仓库平级的独立仓库 ai-backend，保留提交历史）M1 已通过独立审查/真实 MySQL/准确 HEAD CI，PR #2 合并为 main@ef8817d。用户于 2026-10-02 要求暂停第二阶段；现有 Provider 小块只留本地审查提交，M2 整体未完成、M3–M5 未实施且暂停。当前优先完成 P1 学习/设计理由；逐项状态见 [验收矩阵](docs/acceptance-matrix.md)。
-
-从 [中文学习指南](docs/learning-guide.md) 开始：命令演练 → 调用链 → 函数契约/锁/所有权 → TTL/AOF真实缺陷 → 停机/证据 → 分轮练习与自查。每次只做当前学习轮次；关键 WHY、替代取舍和错误后果均对照源码。阶段和实际命令/结果见 [开发记录](docs/notes.md)，进度表见执行说明书 §6。
+配套的学习文档在 [docs/learn](docs/learn/README.md)，按 Go 的核心知识点分成 9 章，每章都附面试题。
 
 ## 快速开始
 
+需要 Go 1.26 或更高版本。
+
 ```sh
-go run ./cmd/server -addr 127.0.0.1:6379 -aof data/appendonly.aof
-redis-cli -p 6379
+go run ./cmd/server                 # 监听 :6379，AOF 写到 data/appendonly.aof
+go run ./cmd/server -aof ""         # 不开持久化
+go run ./cmd/client                 # 自带的交互式客户端，-addr 指定地址
 ```
 
-开发需 Go 1.26 或更高版本，当前支持 Windows/Linux。redis-cli 是官方 Redis 客户端。服务默认监听 `:6379`，示例使用本机地址；`-addr` 配置地址，`-aof ""` 关闭持久化。Ctrl+C/SIGTERM 先关 listener，关闭闲置连接、排空已开始的命令（2 秒网络预算），等待后台清理，再同步并关闭 AOF；不继续执行预读的流水线请求。极端执行器/磁盘阻塞不能靠 context 强行取消，超时会报告失败。本机对自有独立控制台进程发送真实 CTRL_C_EVENT，退出约 1.6–3.0ms，退出码 0，随后重开 AOF 恢复成功；这是自动信号验收，未模拟极端磁盘阻塞，也不构成每次退出耗时保证。
+也可以直接用官方的 `redis-cli -p 6379`。
+
+```text
+mini-redis> SET name redis
+OK
+mini-redis> LPUSH list a b c
+(integer) 3
+mini-redis> LRANGE list 0 -1
+1) "c"
+2) "b"
+3) "a"
+mini-redis> EXPIRE name 100
+(integer) 1
+mini-redis> TTL name
+(integer) 100
+```
+
+按 Ctrl+C（或发送 SIGTERM）停机：不再接受新连接，正在执行的命令把回复写完，空闲连接直接关闭，最多等 2 秒；然后等后台清理退出，最后关闭 AOF。
 
 ## 支持的命令
 
 | 命令 | 语义 |
 |---|---|
-| `PING [message]` | 无参数返回 PONG，有参数返回二进制 bulk |
-| `SET key value` | 保存 String，可覆盖 List；覆盖后清除原 TTL |
-| `GET key` | 缺失或过期返回 nil；List 返回 WRONGTYPE |
-| `DEL key [key ...]` | 删除存在且未过期的 key，重复 key 只计一次 |
-| `EXISTS key [key ...]` | 统计存在且未过期的 key；重复参数重复计数 |
-| `LPUSH key value [value ...]` | 按参数顺序依次插入头部，a b c 得到 c,b,a；保留已有 TTL |
-| `LPOP key` | 弹出头部并保留 TTL；最后一个元素被弹出时删除 key 与 TTL |
-| `LRANGE key start stop` | stop 包含在范围内；支持负下标，缺失返回空数组 |
-| `EXPIRE key seconds` | key 不存在返回 0，成功返回 1；0 或负数立即删除；暂不支持 NX/XX/GT/LT |
-| `TTL key` | 不存在/过期为 -2，无 TTL 为 -1；其余返回剩余秒数，按最近整秒取整 |
+| `PING [message]` | 无参数返回 PONG，有参数原样返回 |
+| `SET key value` | 保存字符串，可以覆盖列表；覆盖时清掉原来的过期时间 |
+| `GET key` | 不存在或已过期返回 nil；对列表返回 WRONGTYPE |
+| `DEL key [key ...]` | 删除存在的 key，返回实际删除的个数，重复的 key 只算一次 |
+| `EXISTS key [key ...]` | 统计存在的 key，重复的参数重复计数 |
+| `LPUSH key value [value ...]` | 按参数顺序依次插入头部，`a b c` 得到 c、b、a；保留已有的过期时间 |
+| `LPOP key` | 弹出头部元素；弹出最后一个时，key 和过期时间一起删除 |
+| `LRANGE key start stop` | 包含 stop，支持负下标；key 不存在返回空数组 |
+| `EXPIRE key seconds` | 成功返回 1，key 不存在返回 0；0 或负数立即删除 |
+| `TTL key` | 不存在返回 -2，没有过期时间返回 -1，否则返回剩余秒数（四舍五入） |
 
-命令名不区分大小写，String/List 值保持二进制安全。参数错误返回 `ERR`，类型冲突返回 `WRONGTYPE`；内部错误链和原始协议错误不会回写客户端。
+命令名不区分大小写，值是二进制安全的。参数错误返回 `ERR`，类型冲突返回 `WRONGTYPE`；内部的错误原因（比如磁盘路径）不会发给客户端。
 
-## 架构
+## 结构
 
 ```mermaid
-flowchart TD
-    Client[redis-cli / RESP2 client] --> TCP[tcp.Server]
-    TCP --> Handler[resp.RespHandler]
-    Handler --> Parser[有界 Parser / context]
-    Parser --> Handler
-    Handler --> Engine[database.Engine]
-    Engine --> Shards[16 分片 RWMutex / String / 双向链表]
-    Engine --> AOF[aof.Store / RESP 日志 / always-fsync]
-    AOF --> Replay[启动重放 / 绝对 TTL]
-    Replay --> Engine
-    Cleanup[context 后台随机抽样] --> Shards
-    Shards --> Reply[RESP 回复编码]
-    Reply --> Client
+flowchart LR
+    Client[redis-cli / cmd/client] --> Server[server.Server<br/>每个连接一个 goroutine]
+    Server -->|resp.ReadRequest| Engine[database.Engine<br/>16 个分片，各一把 RWMutex]
+    Engine -->|先写日志| AOF[aof.Store<br/>追加并 fsync]
+    Engine -->|日志确认后| Shards[分片里的字符串和列表]
+    Cleanup[后台清理<br/>每 250 ms 随机抽样] --> Shards
+    AOF -.->|启动时重放| Engine
+    Server -->|resp.EncodeReply| Client
 ```
+
+| 包 | 做什么 |
+|---|---|
+| [cmd/server](cmd/server/main.go) | 进程入口：参数、信号、恢复 AOF、启动服务、按顺序收尾 |
+| [server](server/doc.go) | 监听、每个连接的读-执行-写循环、优雅停机 |
+| [resp](resp/doc.go) | RESP 的字节格式：读一条请求、编码请求和回复 |
+| [database](database/doc.go) | 存储引擎：分片、命令、过期、写日志的顺序。不依赖项目里的其他包 |
+| [aof](aof/doc.go) | 追加日志：启动恢复、追加并刷盘、跨平台文件锁 |
+| [cmd/client](cmd/client/doc.go) | 交互式客户端 |
+
+每个包的 `doc.go` 写了这个包解决什么问题、文件怎么分工、从哪里读起。
 
 ## 设计取舍
 
-1. 分片读写锁保留并发读能力，多 key 命令按固定分片顺序锁定；热点 key 仍受同一把锁约束；S5 实测该场景分片略慢，更多分片不能自动改善热点。
-2. 惰性删除保证访问语义，后台每 250ms、每分片最多 256 次随机抽样回收冷 key。累计主动删除 32,768 个后，在分片锁外调用 debug.FreeOSMemory，两次至少间隔 5 秒，使空闲服务也有机会归还页；代价是全进程 GC/归还内存开销，回收不精确到期时刻。
-3. AOF 采用先日志刷盘后改内存，写失败拒绝本次变更；每次 fsync 且持久化写入串行，换来清楚的确认边界，代价是吞吐与磁盘等待。
+1. **分片锁。** 16 个分片各一把读写锁，不同 key 的命令可以并行。多 key 命令把 key 换算成分片编号，去重、排序后加锁，避免死锁。热点 key 落在同一个分片上，分片帮不上忙。
+2. **先日志，后内存。** 写命令先在锁内算出“回复什么、日志记什么、内存怎么改”，日志写入并 fsync 成功后才改内存。所以回复了 OK 的写入，进程崩溃后不会丢；日志写失败时，内存里什么也没发生。
+3. **日志记效果，不记原命令。** EXPIRE 记成绝对的到期时刻（`__EXPIREATMS`），重启不会让 key 多活；新建的列表记成 `_LNEW`，过期后重建的列表不会混进旧元素；没有效果的写不记。这两个私有命令客户端不能直接调用。
+4. **惰性删除加定期抽样。** 读写时发现过期就删；后台每 250 ms 每个分片最多随机抽 256 个。大批 key 过期后，在锁外调用 `debug.FreeOSMemory` 把内存还给操作系统，至少间隔 5 秒。
+5. **以“开始执行”为界停机。** 已经开始的命令做完、写完回复；读进来但还没开始的流水线请求不再执行。每个连接只有一个 goroutine，同步地读、执行、写回，不用 channel 在 goroutine 之间传请求。
 
-## 崩溃窗口
+## 持久化
 
-默认开启 AOF（Append Only File，顺序追加的操作日志）。`-aof ""` 关闭持久化。当前仅支持 Windows/Linux，文件由一个进程独占，路径所在目录必须可写。
+默认开启 AOF。写入顺序是：校验 → 追加日志 → fsync → 修改内存 → 回复。每条写都 fsync，换来清楚的确认边界，代价是写入吞吐受磁盘限制，而且所有写命令在日志锁上串行。
 
-写入顺序是 **校验 → 追加 RESP 日志 → fsync → 修改内存 → 回复**，只用 always-fsync 一种策略。依赖操作系统 fsync 成功的保证，已确认写入的应用层缓冲丢失窗口为 **0 秒**，代价是每条写入都等待磁盘。同步后、回复前崩溃时，未确认操作可能在重启后出现；重试非幂等 List 操作可能重复。
+- 启动时，文件末尾的半条记录（上次写到一半时崩溃）会被截断，然后继续启动；中间一条完整却格式错误的记录会让启动失败，并报出字节位置，避免悄悄丢掉后面已经确认的数据。
+- 写入或 fsync 失败时，文件截断回最后确认的位置，之后一直拒绝写入，需要检查磁盘后重启。
+- 文件由一个进程独占（Linux 和 macOS 用 `flock`，Windows 用 `LockFileEx`）。其他平台不支持文件锁，开启 AOF 会启动失败，用 `-aof ""` 关闭后可以正常运行。
+- 同步后、回复前崩溃时，客户端没收到回复的命令可能已经生效；重试 LPUSH 这类命令可能重复。
+- 早于 2026-10-02 写出的日志里没有 `_LNEW` 记录，无法区分“过期后新建的列表”和“过期前追加的列表”。
+- 这里的保证依赖操作系统和磁盘如实执行 fsync，不能据此承诺断电或文件系统损坏时不丢数据。
 
-EXPIRE 记录绝对毫秒期限，重启不会延长 TTL。仅恢复尾部半条命令，完整坏记录拒绝启动。写入/同步失败会尝试回滚文件，保持本次内存改动未应用，并拒绝后续写入；同步和回滚同时失败时文件状态不确定，必须检查存储后重启。不能据此承诺硬件断电或文件系统损坏时绝对不丢数据。
+## 性能
 
-## 性能数据
+只测存储引擎（不经过网络、不开 AOF、没有过期时间），10000 个 key、64 字节的值，16 个 goroutine 并发，每格跑三次取中位数，单位 ns/op：
 
-| 负载（ns/op 中位数；越小越好） | 单全局 RWMutex | 16 分片 | 64 分片 |
+| 负载 | 1 个分片 | 16 个分片 | 64 个分片 |
 |---|---:|---:|---:|
 | 读:写 = 9:1 | 386.90 | 58.11 | 34.70 |
 | 纯写 | 361.60 | 109.60 | 68.48 |
-| 80% 热点，读:写 = 1:1 | 381.70 | 394.30 | 405.80 |
+| 80% 访问同一个 key，读:写 = 1:1 | 381.70 | 394.30 | 405.80 |
 
-Windows/amd64；AMD Ryzen 7 9700X（8 核/16 逻辑处理器）；CIM 可用物理内存 33,396,543,488 bytes（约 31.10 GiB）；Go 1.27.1；GOMAXPROCS=16，RunParallel 默认 16 个 worker。
+环境：Windows/amd64，AMD Ryzen 7 9700X（8 核 16 线程），Go 1.27.1，GOMAXPROCS=16。原始输出、CPU profile 和 2026-11-10 改造前后的交替对比见 [docs/performance.md](docs/performance.md)。同一台机器在不同时间测，绝对数字可能差很多；比较两个版本要在同一时段交替运行。
 
-10,000 key、64-byte value；无 AOF/TTL/TCP；每格三次中位数。热点场景更多分片反而略慢，因为同一 key 仍受同一把锁约束。命令、分配开销、原始输出与 CPU profile 分析见 [性能记录](docs/performance.md)。这些数值不能外推到磁盘持久化或网络服务。
-
-## 已知限制
-
-- 只接受 RESP2 数组/bulk 请求，最多 1024 参数、单 bulk 16 MiB、协议头 64 字节、单请求 32 MiB。
-- EXPIRE 的正数秒数受 Go time.Duration 范围约束；过大或非法整数返回 ERR。暂不支持 SET 的 EX/PX/NX/XX 等选项。
-- 无认证、TLS、连接总数/数据总量配额。仅面向学习与受控本机环境。
-- 大批过期会触发受频率限制的主动 GC；本机 10 万 key、256-byte value、5 秒 TTL、无 AOF/后续读取时，工作集在 15 秒内从 82,616,320 降到 25,841,664 bytes。map/slice 容量仍可保留，不保证回到启动内存或相同回落比例；S5 基准未运行清理，不包含这项 GC 的请求延迟成本。
-- 学习客户端 `cmd/client` 的显示能力未扩展，不能作为完整命令兼容性验收工具。
-- Cluster、复制、事务、Lua、Pub/Sub、其他数据结构和 AOF Rewrite 不在本项目范围。
-
-## 本地检查与容器
+## 测试与检查
 
 ```sh
-go test ./... -count=1 -timeout=60s
+go test ./... -count=1                          # 加 -short 跳过一个要等 10 万个 key 过期的测试
+go test -race ./... -count=1 -timeout=180s      # Windows 上需要 CGO_ENABLED=1 和 gcc
 go vet ./...
-go build ./...
-gofmt -l .
+GOOS=windows go vet ./...
+GOOS=darwin go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+go test ./resp -run '^$' -fuzz FuzzReadRequest -fuzztime 10s
 ```
 
-已安装 Staticcheck 时运行 `staticcheck ./...`。支持的 C 工具链下运行 `go test -race ./... -count=1 -timeout=180s`；经使用者明确同意，仅在项目子进程使用已有便携 GCC，内存修复后的全量 race 已通过，没有更改系统编译器配置。解析器长期回归：`go test ./resp -fuzz=FuzzParseStream -fuzztime=10m -parallel=2`。
+CI 在每次提交时跑格式检查、`-race` 测试、三个平台的 vet、staticcheck 和构建。
 
-已有 Docker daemon 和官方客户端时：
+行为基线：[server/testdata/session.golden](server/testdata/session.golden) 固定一整段 TCP 会话的回复字节，[database/testdata](database/testdata) 固定 AOF 记录序列和旧 AOF 文件的恢复结果。重构时这三份文件必须逐字节不变。
+
+## 容器
 
 ```sh
 docker build -t mini-redis:local .
 docker run --rm --name mini-redis-local -p 127.0.0.1:6379:6379 -v mini-redis-data:/data mini-redis:local
 ```
 
-多阶段构建将 Go 1.27.1 编译的 Linux 可执行文件放入 scratch 镜像，以非 root 用户运行；命名卷保存 AOF。官方客户端可运行 `docker run --rm --network container:mini-redis-local redis:alpine redis-cli -h 127.0.0.1 -p 6379 PING`。停止用 `docker stop --time 3 mini-redis-local`。本轮启动已有 Docker Desktop 29.7.2，Docker 构建/运行与官方 redis-cli 8.10.2 验收通过。容器内 SIGKILL 后命名卷恢复 String/List、绝对 TTL 未续命；SIGTERM 正常停止约 0.294s、退出码 0，AOF 重开成功。临时验收容器和数据卷已清理。GitHub Actions 的 race/vet/Staticcheck/build/格式已在 [草稿 PR #1](https://github.com/Li-Nepenthe/mini-redis/pull/1) 上通过，实测来源见 [CI 运行](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36974612279)。PR #1 已合并，main@84d3c8c 的 [CI](https://github.com/Li-Nepenthe/mini-redis/actions/runs/36991251698) 全步骤通过；默认仓库页面已实测显示项目 README。仓库元信息和本人口述仍待完成。
+多阶段构建，运行镜像基于 scratch，以非 root 用户运行；AOF 保存在命名卷 `/data` 里。`docker stop` 发送 SIGTERM，触发优雅停机。
 
-## 未来方向
+## 已知限制
 
-封版后只在这里记录想法，不自动实施；本轮仍按说明书完成既定阶段，不追加范围外功能。
+- 只接受 RESP2 数组请求：最多 1024 个参数，单个参数 16 MiB，单条请求 32 MiB，头部 64 字节。
+- 不支持 SET 的 EX、PX、NX、XX 等选项，也不支持 EXPIRE 的 NX、XX、GT、LT。
+- 没有认证、TLS、连接数上限和内存上限，只适合本机或受控环境。
+- 没有组提交、AOF 重写、内存淘汰、复制、集群、事务、Pub/Sub 和其他数据结构。
+- 删除大量 key 后，map 自身占的空间不会缩小。
+- 自带客户端按空白拆分输入，不支持带空格的值。
 
+## 开发历程
 
-### AOF 历史 TTL 与新建边界
+- 2026-03 到 2026-10：从 TCP 和 RESP 解析起步，逐步加入分片引擎、过期、AOF、优雅停机、测试和 CI（第一阶段在 2026-10-01 完成）。
+- 2026-11：可读性改造（[PR #5](https://github.com/Li-Nepenthe/mini-redis/pull/5)）。对外行为不变（三份 golden 逐字节对比），拆分了写路径和大文件，去掉了每个连接的解析 goroutine，合并了两套停机逻辑，文件锁改用 `golang.org/x/sys` 以支持 macOS，修好了客户端读数组回复会错位的 bug，并按“写思路和设计”的标准重写了全部注释。
 
-重放全部历史写入期间不以重启时间提前删键，避免过期前追加的 List 永久复活、续期后的 String 丢失。新建 List 的持久化命令为内部 _LNEW（网络不开放），明确清除旧值/TTL；重放结束后普通访问与清理 worker 按当前时间删除最终过期键。EXPIRE 仍使用绝对 __EXPIREATMS，未增加网络命令或 AOF Rewrite。
-
-旧草稿版本的 SET/LPUSH/LPOP/DEL/绝对过期记录仍可读取。旧日志没有记录“过期后 LPUSH 创建新 List”的边界，无法事后区分该情况和过期前追加；这类旧数据应先保留原文件并人工核对，不能声称能无损推断。新的日志记录解决该歧义。
-
-## 从零学习与全覆盖备注
-
-[学习教程](docs/learning-guide.md)按十章讲清问题、基础、请求、命令、并发、TTL、AOF、停机和验证；[完整参考答案](docs/tutorial/09-answers.md)逐题给推导、常错和纠偏，并提供S6七点及3/15分钟示范。每个包与全部具名函数（含未导出、平台、测试、fuzz/基准）都有用途与边界注释，明细见[注释审计](docs/comment-coverage.md)和[教学覆盖矩阵](docs/teaching-coverage.md)。教学顺序模拟从零构建，不是提交历史；材料与个人学习验收分开，P2继续暂停。
+每一步的具体经过，见学习文档各章末尾的“开发过程回放”。

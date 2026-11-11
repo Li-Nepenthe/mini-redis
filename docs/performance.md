@@ -101,6 +101,111 @@ ok  	Mini-Redis/database	71.214s
 
 ## 2026-10-02 · 大批 TTL 回收变更的适用边界
 
-本次新增主动删除累计 32,768 个 key 后、间隔至少 5 秒的锁外 debug.FreeOSMemory。上方九格基准没有启动 RunCleanup、没有 TTL，因此命令/锁路径未变，保留原始数字与 profile；这些数据没有测到主动 GC、归还页与大量过期并发请求的尾延迟成本，不用它证明新的内存策略没有性能代价。真实进程工作集的修复前后结果见 [开发记录](notes.md) 最新验收段，测的是内存回落，不是吞吐基准。
+本次新增主动删除累计 32,768 个 key 后、间隔至少 5 秒的锁外 debug.FreeOSMemory。上方九格基准没有启动 RunCleanup、没有 TTL，因此命令/锁路径未变，保留原始数字与 profile；这些数据没有测到主动 GC、归还页与大量过期并发请求的尾延迟成本，不用它证明新的内存策略没有性能代价。真实进程工作集的修复前后结果记录在当时的开发记录里，测的是内存回落，不是吞吐基准；开发记录已在 2026-11-10 的可读性改造中删除，可用 `git show 31684b7:docs/notes.md` 查看。
 
 文档展示的 CPU 名称行已去除末尾填充空格，以通过暂存差异检查；benchmark 数值未变，任务中的原始 s5-benchmark.txt 保留原字节。
+
+## 2026-11-10 · 可读性改造前后的交替对比
+
+目的：确认 PR #5 的可读性改造没有让引擎变慢。代码分别是改造前的 `31684b7` 和改造后的 `dbd2e9f`，在同一台机器、同一时段交替运行：改造前 2 次 → 改造后 2 次 → 改造前 2 次 → 改造后 2 次，每个版本每格共 4 个样本。命令（默认 benchtime 1s）：
+
+```sh
+go test ./database -run '^$' -bench BenchmarkEngine -count 2 -benchmem
+```
+
+| 负载 / 分片 | 改造前中位数 | 改造后中位数 | B/op 前→后 | allocs/op 前→后 |
+|---|---:|---:|---:|---:|
+| read90 / 1 | 401.1 | 410.5 | 116 → 116 | 3 → 3 |
+| read90 / 16 | 61.7 | 62.2 | 116 → 116 | 3 → 3 |
+| read90 / 64 | 36.9 | 36.6 | 116 → 116 | 3 → 3 |
+| write100 / 1 | 469.9 | 491.8 | 344 → 336 | 10 → 10 |
+| write100 / 16 | 116.2 | 118.6 | 344 → 336 | 10 → 10 |
+| write100 / 64 | 73.7 | 78.5 | 344 → 336 | 10 → 10 |
+| hot80 / 1 | 620.7 | 585.0 | 217 → 214 | 6 → 6 |
+| hot80 / 16 | 568.7 | 592.5 | 217 → 214 | 6 → 6 |
+| hot80 / 64 | 574.0 | 639.1 | 217 → 214 | 6 → 6 |
+
+结论：两个版本的差异大多在几个百分点以内，方向不一致；hot80 同一格内的样本相差可达 100 多 ns，64 分片那一格的差异落在这个波动范围里。分配次数不变，每次操作的字节数略少。样本只有 4 个，没有做统计检验，只能说没有看到稳定的退化，不能说有提升。
+
+另外要注意：同样是改造前的代码，这次 write100 的单分片一格和 hot80 的三格，比上面 10 月的记录慢了约 30%–60%，其余格子差别不大。代码没变，变的是机器当时的状态。所以不同日期的数字不能直接比较，比较两个版本要在同一时段交替运行。
+
+原始输出：
+
+```text
+== base round 1
+BenchmarkEngine/read90/shards1-16 	 2922589	       405.7 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards1-16 	 2971801	       390.6 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	19575121	        60.53 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	20194200	        62.30 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	30166670	        37.12 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	32176843	        37.43 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2388795	       512.4 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2487020	       476.9 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	10050578	       115.8 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	 9977724	       116.5 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	16125954	        74.92 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	15633854	        72.75 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 1840622	       643.1 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 1853622	       606.1 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 2148554	       557.8 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 2172218	       559.4 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 2135740	       569.1 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 2141821	       562.9 ns/op	     217 B/op	       6 allocs/op
+== final round 1
+BenchmarkEngine/read90/shards1-16 	 3027314	       397.9 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards1-16 	 3050619	       420.6 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	18782193	        62.45 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	19134391	        62.86 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	32773810	        36.72 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	31337482	        36.97 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2429778	       480.4 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2423563	       492.6 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	10015539	       119.1 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	10192424	       118.1 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	15437517	        75.42 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	15742536	        74.36 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 2030330	       579.6 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 2045254	       590.3 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 2139626	       567.9 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 2141610	       564.0 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 1933701	       666.4 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 1861083	       609.3 ns/op	     214 B/op	       6 allocs/op
+== base round 2
+BenchmarkEngine/read90/shards1-16 	 3044316	       396.5 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards1-16 	 3046754	       420.7 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	19341954	        61.63 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	18920640	        61.68 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	31613888	        36.70 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	32615431	        36.05 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2583469	       456.3 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2672353	       462.8 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	10098638	       118.4 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	10270041	       115.4 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	15722940	        73.96 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	15258536	        73.37 ns/op	     344 B/op	      10 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 1909767	       623.9 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 1942180	       617.5 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 2074695	       578.8 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 2065156	       578.0 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 2044545	       578.9 ns/op	     217 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 2051691	       601.4 ns/op	     217 B/op	       6 allocs/op
+== final round 2
+BenchmarkEngine/read90/shards1-16 	 3039547	       400.4 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards1-16 	 3025198	       424.5 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	18854523	        61.86 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards16-16         	18916762	        61.74 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	32078185	        36.41 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/read90/shards64-16         	32476231	        36.47 ns/op	     116 B/op	       3 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2220385	       498.5 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards1-16        	 2363072	       490.9 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	 9904454	       117.1 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards16-16       	 8733394	       124.7 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	14739534	        82.88 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/write100/shards64-16       	14880841	        81.63 ns/op	     336 B/op	      10 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 1745953	       641.7 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards1-16           	 2511796	       525.2 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 2544890	       617.1 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards16-16          	 1693614	       649.7 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 1905766	       611.8 ns/op	     214 B/op	       6 allocs/op
+BenchmarkEngine/hot80/shards64-16          	 1739542	       714.8 ns/op	     214 B/op	       6 allocs/op
+```
