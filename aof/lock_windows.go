@@ -1,21 +1,17 @@
+// 本文件：lockFile 为 Windows 的 AOF 取得非阻塞独占文件锁，句柄关闭时由系统释放。
+
 package aof
 
 import (
+	"math"
 	"os"
-	"syscall"
-	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
-var lockFileEx = syscall.NewLazyDLL("kernel32.dll").NewProc("LockFileEx")
-
-// lockFile 对已打开的 file 调用 Windows LockFileEx，非阻塞地独占整段文件范围。
-// 返回系统调用失败原因或 nil；锁随句柄关闭/进程退出释放，不创建或猜测陈旧锁文件。
+// 从偏移零锁到最大范围，连将来追加的字节也受保护，不能只锁启动时已有的内容。
 func lockFile(file *os.File) error {
-	var overlapped syscall.Overlapped
-	// 非阻塞独占锁由操作系统在关闭或进程退出时释放，崩溃后不用猜测/删除陈旧锁文件。
-	ok, _, err := lockFileEx.Call(file.Fd(), 3, 0, 0xffffffff, 0xffffffff, uintptr(unsafe.Pointer(&overlapped)))
-	if ok == 0 {
-		return err
-	}
-	return nil
+	var overlapped windows.Overlapped
+	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK | windows.LOCKFILE_FAIL_IMMEDIATELY)
+	return windows.LockFileEx(windows.Handle(file.Fd()), flags, 0, math.MaxUint32, math.MaxUint32, &overlapped)
 }

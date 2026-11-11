@@ -1,18 +1,20 @@
+// 本文件：TestRunShutdownFlushesAndReleasesAOF 贯穿真实 TCP、后台退出与 AOF 重开，检查启动者的停机顺序。
+
 package main
 
 import (
 	"context"
-	"github.com/Li-Nepenthe/mini-redis/aof"
-	"github.com/Li-Nepenthe/mini-redis/database"
 	"io"
 	"net"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Li-Nepenthe/mini-redis/aof"
+	"github.com/Li-Nepenthe/mini-redis/database"
 )
 
-// TestRunShutdownFlushesAndReleasesAOF 通过真实 TCP 确认 SET，再取消服务，检查有界样本退出、AOF 锁释放及重开恢复值。
-// t 管理自己的连接/临时文件，包含 idle 连接、清理与文件关闭的集成路径；不保证任意慢磁盘/执行器都在 3 秒内完成。
+// 先等 SET 的确认回复，再触发停机；重开日志能恢复值并取得锁，才说明确认写和资源释放都完成了。
 func TestRunShutdownFlushesAndReleasesAOF(t *testing.T) {
 	reservation, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

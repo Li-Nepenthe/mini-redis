@@ -1,15 +1,16 @@
+// 本文件：FuzzReadRequest 对同步解析器做结构与边界模糊测试。
+
 package resp
 
 import (
+	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"testing"
 )
 
-// FuzzParseStream 用 f 注册正常、多帧、边界和损坏输入种子，再对变异字节运行 Parser。
-// 回调断言 Payload 非 nil、Data/Err 互斥、完整帧 BytesRead 合法，防止 panic 与无效状态；普通 test 只跑种子，长 fuzz 需显式 -fuzz。
-func FuzzParseStream(f *testing.F) {
+// 保留多帧、空帧、边界和损坏输入种子，检查数据与错误互斥，且字节计数始终落在输入内。
+func FuzzReadRequest(f *testing.F) {
 	seeds := [][]byte{
 		{},
 		[]byte("*2\r\n$3\r\nGET\r\n$4\r\nname\r\n"),
@@ -30,18 +31,26 @@ func FuzzParseStream(f *testing.F) {
 		f.Add(seed)
 	}
 
-	// 每次变异只用有限 bytes.Reader，读到通道关闭；这里只断言结构/边界，业务语义另由命令测试覆盖。
 	f.Fuzz(func(t *testing.T, data []byte) {
-		parser := NewRespParser()
-		for payload := range parser.ParseStream(context.Background(), bytes.NewReader(data)) {
-			if payload == nil {
-				t.Fatal("ParseStream() 返回了 nil Payload")
+		reader := bufio.NewReader(bytes.NewReader(data))
+		consumed := 0
+		for {
+			args, size, err := ReadRequest(reader)
+			if (err == nil) == (args == nil) {
+				t.Fatal("request must contain either args or error")
 			}
-			if (payload.Err == nil) == (payload.Data == nil) {
-				t.Fatal("Payload 必须且只能包含 Data 或 Err 之一")
+			if err != nil {
+				if size != 0 {
+					t.Fatal("failed request reported complete bytes")
+				}
+				return
 			}
-			if payload.Err == nil && (payload.BytesRead <= 0 || payload.BytesRead > MaxRequestLength) {
+			if size <= 0 || size > MaxRequestLength {
 				t.Fatal("complete record has invalid wire byte count")
+			}
+			consumed += size
+			if consumed > len(data) {
+				t.Fatal("wire byte count exceeds input")
 			}
 		}
 	})

@@ -1,25 +1,24 @@
+// 本文件：Open 同步恢复 AOF 并修复半条尾部，Append 负责写入确认与失败回滚，Close 释放文件和锁。
+
 package aof
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Li-Nepenthe/mini-redis/resp"
 	"io"
 	"log"
 	"os"
-	"strconv"
 	"sync"
+
+	"github.com/Li-Nepenthe/mini-redis/resp"
 )
 
 type logFile interface {
-	// Writer 的 Write 允许短写/部分写伴错误，由 Store 循环或触发确认前缀回滚。
 	io.Writer
-	// Sync 返回 nil 才表示此轮同步成功；故障不能被缓存的成功状态掩盖。
 	Sync() error
-	// Truncate 将文件长度缩至确认前缀；失败由 Store.fail 合并并持续拒写。
 	Truncate(int64) error
-	// Close 释放文件句柄及系统独占锁，关闭错误必须传给上层。
 	Close() error
 }
 
@@ -32,10 +31,9 @@ type Store struct {
 	RecoveredTailBytes int64
 }
 
-// Open 创建或打开 path 指定的普通 AOF 文件、独占加锁，并依次把完整记录交给 replay 恢复内存。
-// ctx 用于取消恢复；replay 不能为 nil，必须能处理私有持久化命令。成功返回由调用者 Close 的 Store，失败返回错误并回收文件。
-// 仅 EOF/UnexpectedEOF 导致的不完整尾部会截到最后完整记录并 Sync；完整坏帧/回放错误保留文件并拒绝启动。
-// 偏移取 Parser 实际消费字节，不能用 bufio 预读游标或重新编码长度。失败前 replay 可能已改变内存，调用者应丢弃该恢复引擎。
+// Open 取得独占锁后同步恢复记录，失败时关闭文件，成功时把句柄交给 Store。
+// 只有 EOF 导致的残帧可以截断；完整坏记录必须拒绝启动，避免静默丢掉已经确认的数据。
+// 恢复中途失败时内存可能已有部分记录，调用者应丢弃这个引擎。
 func Open(ctx context.Context, path string, replay func([][]byte) error) (store *Store, err error) {
 	if replay == nil {
 		return nil, errors.New("AOF replay callback is required")
@@ -46,9 +44,8 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 	if err != nil {
 		return nil, fmt.Errorf("open AOF: %w", err)
 	}
-	owned := true
 	defer func() {
-		if owned {
+		if err != nil {
 			err = errors.Join(err, file.Close())
 		}
 	}()
@@ -62,29 +59,20 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 	if err := lockFile(file); err != nil {
 		return nil, fmt.Errorf("lock AOF: %w", err)
 	}
-	parseCtx, cancel := context.WithCancel(ctx)
-	ch := resp.NewRespParser().ParseStream(parseCtx, file)
-	// 收尾先取消解析；错误时先关文件打断 Read，再排空通道等待生产者退出，防止提前报错留下 goroutine。
-	// 成功路径等待解析完成后将文件交给返回的 Store，不关闭其句柄。
-	defer func() {
-		cancel()
-		if err != nil {
-			_ = file.Close()
-			owned = false
-		}
-		for range ch {
-		}
-	}()
+	reader := bufio.NewReader(file)
 	var offset, recovered int64
-	for payload := range ch {
+	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if payload.Err != nil {
-			if !errors.Is(payload.Err, io.EOF) && !errors.Is(payload.Err, io.ErrUnexpectedEOF) {
-				return nil, fmt.Errorf("invalid AOF at byte %d: %w", offset, payload.Err)
+		args, size, readErr := resp.ReadRequest(reader)
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+				return nil, fmt.Errorf("invalid AOF at byte %d: %w", offset, readErr)
 			}
-			// 只恢复不完整尾部；完整坏记录不能自动截断，否则可能静默丢掉已确认数据。
 			if err := file.Truncate(offset); err != nil {
 				return nil, fmt.Errorf("truncate AOF tail: %w", err)
 			}
@@ -94,10 +82,10 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 			recovered = info.Size() - offset
 			break
 		}
-		if err := replay(payload.Data); err != nil {
+		if err := replay(args); err != nil {
 			return nil, fmt.Errorf("replay AOF at byte %d: %w", offset, err)
 		}
-		offset += int64(payload.BytesRead)
+		offset += int64(size)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -105,36 +93,11 @@ func Open(ctx context.Context, path string, replay func([][]byte) error) (store 
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("seek AOF append position: %w", err)
 	}
-	owned = false
 	return &Store{file: file, size: offset, RecoveredTailBytes: recovered}, nil
 }
 
-// encodeRequest 把 args 的每个二进制参数编码为 RESP 数组中的 bulk，返回独立记录字节或边界错误。
-// 检查参数数目、单 bulk 与整条记录预算，不修改 args，也不写文件；不验证业务命令含义，业务校验由 Engine 完成。
-func encodeRequest(args [][]byte) ([]byte, error) {
-	if len(args) == 0 || len(args) > resp.MaxArrayLength {
-		return nil, errors.New("invalid AOF argument count")
-	}
-	data := []byte("*" + strconv.Itoa(len(args)) + "\r\n")
-	for _, arg := range args {
-		if len(arg) > resp.MaxBulkLength {
-			return nil, errors.New("AOF bulk exceeds protocol limit")
-		}
-		data = append(data, '$')
-		data = strconv.AppendInt(data, int64(len(arg)), 10)
-		data = append(data, '\r', '\n')
-		if len(arg)+2 > resp.MaxRequestLength-len(data) {
-			return nil, errors.New("AOF record exceeds protocol limit")
-		}
-		data = append(data, arg...)
-		data = append(data, '\r', '\n')
-	}
-	return data, nil
-}
-
-// Append 将 args 编码后完整写入 AOF 并 Sync；nil 表示该记录已经通过本次同步确认。
-// 与 Close 共用 Store.mu，size 仅在完整写入且同步成功后增加，表示上次确认前缀而非当前文件长度。
-// 关闭后返回 os.ErrClosed；已有存储失败持续返回原失败；编码错误不写文件。写入/同步失败触发尽力回滚并粘住失败状态。
+// Append 完整写入并刷盘后才推进确认位置，供引擎决定是否修改内存。
+// 写入或刷盘失败后持续拒写；编码错误发生在文件操作前，不影响已确认的数据。
 func (s *Store) Append(args [][]byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -144,7 +107,7 @@ func (s *Store) Append(args [][]byte) error {
 	if s.failed != nil {
 		return s.failed
 	}
-	data, err := encodeRequest(args)
+	data, err := resp.AppendRequest(nil, args)
 	if err != nil {
 		return err
 	}
@@ -166,10 +129,9 @@ func (s *Store) Append(args [][]byte) error {
 	return nil
 }
 
-// fail 在调用者持有 Store.mu 时处理 cause：尽力 Truncate 到确认的 size 并再次 Sync，保存合并错误并写内部日志。
-// 返回包含原始原因及回滚失败原因的错误；即使回滚成功也持续拒绝后续 Append，不能把一次存储故障掩盖为已自动恢复。
+// 故障后尽力回到最后确认的位置，并保留原始错误和回滚错误。
+// 即使回滚成功也不能当作自动恢复，否则后续写入会掩盖磁盘故障；调用者须持 Store.mu。
 func (s *Store) fail(cause error) error {
-	// 尽力回滚到上次确认的前缀；即使回滚成功也持续拒绝写入，避免掩盖存储故障。
 	truncateErr := s.file.Truncate(s.size)
 	syncErr := s.file.Sync()
 	s.failed = fmt.Errorf("append AOF: %w", errors.Join(cause, truncateErr, syncErr))
@@ -177,8 +139,7 @@ func (s *Store) fail(cause error) error {
 	return s.failed
 }
 
-// Close 在 Store.mu 下将存储标记关闭、必要时 Sync 并关闭文件，返回持久化/关闭的合并错误。
-// 重复调用不再操作文件而返回已保存的错误；先前 Append 失败仍会关闭句柄并保留原因，不能用 Close 清除失败状态。
+// 关闭与追加共享一把锁，保证最后一次刷盘不会和写入交错；重复关闭仍返回已保存的故障。
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

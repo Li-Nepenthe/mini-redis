@@ -1,3 +1,5 @@
+// 本文件：BenchmarkEngine 在相同数据与负载下比较分片数量对耗时和分配的影响。
+
 package database
 
 import (
@@ -6,9 +8,8 @@ import (
 	"testing"
 )
 
-// BenchmarkEngine 使用 b 的并行计时，比较 1/16/64 分片在约 90% 读、全写与 80% 单 key 热点（约半写）下的耗时和分配。
-// 预填 10000 key/64 字节值后 ResetTimer；每 worker 用独立伪随机序列，避免共享随机锁污染被测竞争。
-// 不启动 TCP、TTL worker 或 AOF，ns/op 是规定负载的平均操作成本，不是网络吞吐或 P99。
+// 预填相同数据后再计时，比较不同分片数在读多、全写和热点负载下的成本。
+// 这里只测引擎，不把网络或日志延迟混进分片竞争。
 func BenchmarkEngine(b *testing.B) {
 	const keyCount = 10000
 	for _, workload := range []string{"read90", "write100", "hot80"} {

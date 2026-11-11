@@ -1,3 +1,5 @@
+// 本文件：TestLargeExpirationReclaimsOutsideShardLocks 观察清理后的内存回收时机，防止回收过程占住分片锁。
+
 package database
 
 import (
@@ -7,14 +9,13 @@ import (
 	"time"
 )
 
-// TestLargeExpirationReclaimsOutsideShardLocks 用可控时钟使阈值以上 key 过期，注入 reclaim 检查调用时所有分片锁都可获取。
-// t 等待回收信号再取消 worker 并等待退出；验证调用边界，不测 OS 工作集或真实 GC 耗时。
+// TestLargeExpirationReclaimsOutsideShardLocks 在回收回调里尝试取得每把锁，确认耗时的内存回收不会挡住命令访问分片。
 func TestLargeExpirationReclaimsOutsideShardLocks(t *testing.T) {
 	engine, elapsed := clockEngine()
 	for i := 0; i < cleanupReclaimKeys+1; i++ {
 		key := strconv.Itoa(i)
-		requireExec(t, engine, true, "SET", key, "value")
-		requireExec(t, engine, 1, "EXPIRE", key, "1")
+		requireExec(t, engine, StatusReply("OK"), "SET", key, "value")
+		requireExec(t, engine, int64(1), "EXPIRE", key, "1")
 	}
 	elapsed.Store(int64(2 * time.Second))
 	reclaimed := make(chan struct{})

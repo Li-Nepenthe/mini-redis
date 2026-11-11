@@ -1,6 +1,27 @@
-// Package database 实现 MiniRedis 的 String/List 命令、分片内存状态、TTL 和日志确认前的写准备。
-// 依赖 Go 标准库；通过 CommandLog 抽象使用日志，不依赖 resp、tcp 或 aof，避免协议/存储循环依赖。
-// Engine 管理 shard 锁和字节所有权；List 自身无锁，map/TTL 索引只能在所属分片锁下访问。
-// AOF 写顺序为 logMu→有序分片锁→日志 Append，确认后才 apply；恢复由启动者顺序调用 Replay。
-// 本包不监听网络、不编码 RESP、不自动启动清理 worker，也不提供完整 Redis 数据类型或事务功能。
+// 本文件：说明 database 的职责与阅读入口，并列出命令、持久化和过期处理的文件分工。
+
+// Package database 把命令作用到内存中的字符串和列表，并处理 key 的过期时间。
+// 网络层只需调用 Engine.Exec；引擎通过 CommandLog 请求日志确认，不依赖具体文件或协议实现。
+//
+// 写入最重要的边界是日志确认：先算好 writePlan，日志落盘后才修改内存。
+// 计划里的回复、记录和内存变更一起阅读，才能看出写失败时为何仍保留旧值。
+//
+// 从 engine.go 的 Exec 读起，再沿写命令进入 write.go 的 executeWrite。
+// 文件分工如下：
+//   - doc.go：本包导航。
+//   - engine.go：引擎创建和命令入口。
+//   - shard.go：分片路由和多 key 有序加锁。
+//   - list.go：分片锁保护下的双向链表。
+//   - read.go：GET、EXISTS、LRANGE 和 TTL。
+//   - write.go：字节所有权、写入计划和日志确认。
+//   - replay.go：日志接口、私有记录标记和历史重放。
+//   - expire.go：过期索引、惰性删除和后台抽样清理。
+//   - errors.go：区分客户端可见的错误和内部原因。
+//   - engine_test.go：命令语义、列表边界、字节所有权和并发测试。
+//   - persistence_test.go：日志失败、无效果写入和历史重放测试。
+//   - golden_test.go：固定 AOF 记录序列。
+//   - legacy_aof_test.go：固定旧 AOF 文件的读取和恢复结果。
+//   - ttl_test.go：固定时钟、TTL 语义和过期清理测试。
+//   - cleanup_test.go：检查内存回收发生在分片锁外。
+//   - benchmark_test.go：不同分片数下的读写与热点基准。
 package database

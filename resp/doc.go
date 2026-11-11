@@ -1,6 +1,18 @@
-// Package resp 在 TCP 字节流与命令接口之间解析受预算限制的数组/bulk 请求并编码 RESP 回复。
-// 生产代码仅依赖 Go 标准库，通过 ProtocolParser/CommandExecutor 连接协议与业务；测试可注入故障实现。
-// Parser 每次调用拥有输出 goroutine/channel；Handler 拥有连接、取消及等待流程，生产者负责关闭通道。
-// 业务结果/公开错误与内部原因分离；二进制长度分帧、完整写回和停机门共同保持请求/响应边界。
-// 本包不持有数据库 map 或 AOF，不实现 inline 请求或全部 RESP 类型，取消不能自行打断任意 Reader。
+// 本文件：说明本包职责、阅读入口和各文件分工。
+
+// Package resp 负责 RESP 请求和回复的字节转换。
+// 从 parser.go 的 ReadRequest 读起，再看 request.go 的请求编码和 reply.go 的回复编码。连接与停机由 server 包负责。
+//
+// 文件分工如下：
+//   - doc.go：本包导航。
+//   - parser.go：同步读取一条请求，保留上限、CRLF 和错误分类。
+//   - request.go：AOF 与客户端共用的请求编码。
+//   - reply.go：执行结果的 RESP 编码和公开错误边界。
+//   - parser_test.go：合法、非法、粘连和分段输入。
+//   - safety_test.go：头部与帧预算、残帧及关闭读取端。
+//   - record_size_test.go：实际消费字节数。
+//   - request_test.go：请求编码、前缀和预算。
+//   - reply_test.go：回复类型与字节表示。
+//   - command_reply_test.go：引擎结果的协议编码。
+//   - fuzz_test.go：FuzzReadRequest 的结构和边界检查。
 package resp

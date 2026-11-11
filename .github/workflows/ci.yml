@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -31,9 +31,13 @@ jobs:
         run: go test -race ./... -count=1 -timeout=180s
       - name: Vet
         run: go vet ./...
+      - name: Vet Windows
+        run: GOOS=windows go vet ./...
+      - name: Vet macOS
+        run: GOOS=darwin go vet ./...
       - name: Staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
           staticcheck ./...
       - name: Build
         run: go build -trimpath ./...

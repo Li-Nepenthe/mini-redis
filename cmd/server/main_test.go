@@ -1,3 +1,5 @@
+// 本文件：TestRunCancellationStopsBackgroundWork 和 TestRunListenFailureStopsBackgroundWork 检查启动取消及监听冲突的退出路径。
+
 package main
 
 import (
@@ -7,8 +9,7 @@ import (
 	"time"
 )
 
-// TestRunCancellationStopsBackgroundWork 验证取消 ctx 后 run 能在 3 秒内返回 nil，没有返回值。
-// 取消可能先于服务启动，允许 run 直接返回；不单凭这一测试证明运行中各 worker 的完整退出时序，另由停机集成测试补足。
+// 取消可能发生在启动前，也可能发生在服务运行中，两种时序都必须让 run 返回。
 func TestRunCancellationStopsBackgroundWork(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -24,8 +25,7 @@ func TestRunCancellationStopsBackgroundWork(t *testing.T) {
 	}
 }
 
-// TestRunListenFailureStopsBackgroundWork 先占用临时端口，验证 run 在监听冲突时返回错误。
-// t 管理端口释放；当前 run 在创建引擎/worker 前就返回，测试没有独立统计 goroutine 数量。
+// 端口被占用时应在建立引擎和后台工作前返回，避免失败的启动留下资源。
 func TestRunListenFailureStopsBackgroundWork(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
