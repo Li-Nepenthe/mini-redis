@@ -39,7 +39,7 @@ go test ./server -run 'Shutdown|Close|Hundred' -v -count=1
 这几个测试名就是本章要讲的停机规则：
 
 - **CloseInterruptsRead**：连接空闲、挂在 Read 上时，停机要能把它打断。
-- **HundredAbnormalDisconnects**：100 个客户端发了半条请求就断开，goroutine 数要回到原来的 3 个，一个都不能泄漏。
+- **HundredAbnormalDisconnects**：100 个客户端发了半条请求就断开。测试检查两件事：登记的连接数回到 0，goroutine 数不超过开始时的基线。这次运行基线是 3 个，结束时也是 3 个，一个都没有泄漏。
 - **DrainsInFlightReply**：停机时正在执行的命令，要把回复写完。
 - **RejectsPipeline**：客户端一次发了两条命令，第一条正在执行时开始停机，第二条就不再执行了。
 - **TimeoutDoesNotHideBlockedExecutor**：等不及了要超时返回，但要如实说“超时了”，不能假装一切都停干净了。
@@ -323,13 +323,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 ### 4. cmd/server：按依赖的反方向收尾
 
-[cmd/server/main.go](../../cmd/server/main.go) 的 `run`，省略了启动部分：
+[cmd/server/main.go](../../cmd/server/main.go) 的 `run`，省略了监听端口和创建引擎的部分（`……` 处省略了代码）：
 
 ```go
-store, err := aof.Open(ctx, aofPath, dbEngine.Replay)
-// ……
-dbEngine.AttachLog(store)
-defer func() { runErr = errors.Join(runErr, store.Close()) }()
+if aofPath != "" {
+	// ……创建目录
+	store, err := aof.Open(ctx, aofPath, dbEngine.Replay)
+	// ……出错就返回，恢复了半条尾部就记一条日志
+	dbEngine.AttachLog(store)
+	defer func() { runErr = errors.Join(runErr, store.Close()) }()
+}
 
 cleanupDone := make(chan struct{})
 go func() {
@@ -353,20 +356,25 @@ go func() {
 	case <-watchStop:
 	}
 }()
+// ……打印“开始监听”
 err = network.Serve(listener)
 close(watchStop)
 <-watchDone
 return err
 ```
 
-按 Ctrl+C 以后：
+按 Ctrl+C 以后，有几件事是同时开始的：
 
-1. ctx 被取消，等待信号的 goroutine 调用 `Shutdown`，最多等 2 秒。
-2. 监听关闭，`Serve` 里的 `Accept` 返回 `net.ErrClosed`；`Serve` 等 `Shutdown` 做完（`<-s.done`）才返回。
-3. `close(watchStop)` 再 `<-watchDone`，确认等待信号的 goroutine 也结束了。
-4. `run` 返回，defer 按后进先出执行：先取消 ctx、等后台清理退出（`<-cleanupDone`），再关闭 AOF，最后关闭监听。
+1. ctx 被取消。后台清理和等待信号的 goroutine 等的是同一个 ctx（`run` 里用 `context.WithCancel` 从信号 ctx 派生出来的），所以两边同时收到。后台清理在 select 里看到 `ctx.Done()`，马上退出；等待信号的 goroutine 开始调用 `Shutdown`。
+2. `Shutdown` 第一件事就是关闭监听。`Serve` 里阻塞的 `Accept` 立刻返回 `net.ErrClosed`，`Serve` 进入收尾，等 `Shutdown` 做完（`<-s.done`）。
+3. `Shutdown` 关闭空闲连接，等执行中的连接写完回复。这一步最多等 2 秒，超时就强制关闭所有连接。
+4. `Shutdown` 做完，`Serve` 返回。`close(watchStop)` 再 `<-watchDone`，确认等待信号的 goroutine 也结束了。
+5. `run` 返回，defer 按后进先出执行：再调用一次 `cancel()`（已经取消过，没有影响），等 `cleanupDone`，确认后台清理确实退出了；然后关闭 AOF：刷盘、关闭文件、释放文件锁；最后的 `listener.Close()` 是第二次关闭，监听在第 2 步就已经关了。
 
-defer 后进先出的顺序，正好就是依赖的反方向：后台清理最后启动、依赖引擎和 AOF，所以最先停；AOF 在它之后关闭；最早占住的端口最后释放。
+两点要注意：
+
+- **2 秒只管第 3 步**，也就是等连接排空。之后关闭 AOF 要拿 `Store.mu`、要刷盘，这些没有时间限制。如果有一条写命令卡在 fsync 里，关闭 AOF 也会等它。
+- **defer 的顺序保证的是“确认结束”的顺序**，不是“开始停止”的顺序：后台清理在第 1 步就开始退出了，但 `run` 要等到第 5 步，确认它真的结束了，才去关闭它依赖的 AOF。
 
 为什么 `Shutdown` 用的是一个新的 `context.Background()` 派生的 ctx，而不是已经被取消的那个？因为那个 ctx 已经取消了，拿它去 `Shutdown`，会立刻走到超时的分支，一点排空的时间都没有。
 
@@ -426,11 +434,11 @@ type hchan struct {
 
 > **项目里没有直接体现，但面试常问**：hchan 的字段和发送接收的过程都在运行时内部。
 
-改造前，每个连接有一个解析 goroutine，通过一个 channel 把解析好的请求交给处理 goroutine。改造时去掉了这个 channel，原因见本章的配角。现在 Mini-Redis 的生产代码里，channel 全都是 `chan struct{}`，只用来通知“某件事已经结束了”，靠关闭来广播，从不传数据：
+改造前，每个连接有一个解析 goroutine，通过一个 channel 把解析好的请求交给处理 goroutine。改造时去掉了这个 channel，原因见本章的配角。现在 Mini-Redis 生产代码里**自己创建**的 channel，全都是 `chan struct{}`，只用来通知“某件事已经结束了”，靠关闭来广播，从不传数据。（标准库给的 channel 不在此列，比如后台清理从 `ticker.C` 收到的是 `time.Time`。）
 
 | channel | 在哪里 | 谁关闭 | 谁在等 |
 |---|---|---|---|
-| `ctx.Done()` | `signal.NotifyContext` 创建 | 收到 Ctrl+C 时由 context 关闭 | 后台清理、等待信号的 goroutine |
+| `ctx.Done()` | `main` 用 `signal.NotifyContext` 得到信号 ctx，`run` 再用 `context.WithCancel` 派生一个子 ctx | 收到 Ctrl+C 时父 ctx 取消，子 ctx 跟着取消；`run` 返回前也会调用 `cancel()` | 后台清理、等待信号的 goroutine，等的都是子 ctx |
 | `cleanupDone` | `cmd/server` 的 `run` | 后台清理的 goroutine 退出时 | `run` 返回前 |
 | `watchStop`、`watchDone` | `cmd/server` 的 `run` | `Serve` 返回后、等待信号的 goroutine 退出时 | 等待信号的 goroutine、`run` |
 | `s.done` | `server.Server` | `Shutdown` 做完时 | `Serve` 返回前 |
@@ -440,7 +448,7 @@ type hchan struct {
 
 **追问：channel 是并发安全的吗？它的性能怎样？**
 
-是的，所有操作都在 hchan 的锁下进行。正因为有锁，大量 goroutine 同时争用同一个 channel 时，性能不如分片的数据结构；单纯保护一个计数器，也不如 atomic。channel 擅长的是传递所有权和事件，不是做高频的共享计数。
+是的。发送、接收、关闭都要在 hchan 的锁下修改它的状态（运行时也有几条不加锁的快速判断，比如非阻塞发送时发现缓冲区已满，直接返回）。正因为有锁，大量 goroutine 同时争用同一个 channel 时，性能不如分片的数据结构；单纯保护一个计数器，也不如 atomic。channel 擅长的是传递所有权和事件，不是做高频的共享计数。
 
 ---
 
@@ -567,21 +575,51 @@ func main() {
 
 两次都是 2 个：一个是 main，另一个是**第一次**泄漏的那个，它永远不会退出了。第二次调用用了有缓冲的 channel，干活的 goroutine 发完就结束了，没有新增。
 
-**用 goroutineleak profile 定位**（Go 1.27.1 本机实测）：在上面的程序末尾加上
+**用 goroutineleak profile 定位。** 这个 profile 在 Go 1.27 起默认可用；Go 1.26 要在构建时设置 `GOEXPERIMENT=goroutineleakprofile` 才有。下面是一个完整的程序，只保留了泄漏的那个版本，末尾输出 profile：
 
 ```go
-pprof.Lookup("goroutineleak").WriteTo(os.Stdout, 1)
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"runtime/pprof"
+	"time"
+)
+
+func fetch() error {
+	result := make(chan int) // 无缓冲：调用方走了，就没人接收
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		result <- 42
+	}()
+	select {
+	case v := <-result:
+		_ = v
+		return nil
+	case <-time.After(10 * time.Millisecond):
+		return errors.New("timeout")
+	}
+}
+
+func main() {
+	fmt.Println(fetch())
+	time.Sleep(200 * time.Millisecond)
+	pprof.Lookup("goroutineleak").WriteTo(os.Stdout, 1)
+}
 ```
 
-输出（地址部分省略）：
+Go 1.27.1 上的输出（地址部分省略）：
 
 ```text
+timeout
 goroutineleak profile: total 1
-1 @ ...
-#	0x...	main.fetch.func1+0x35	.../main.go:21
+1 @ 0x… 0x… 0x… 0x… 0x…
+#	0x…	main.fetch.func1+0x…	.../main.go:15
 ```
 
-它直接指出了泄漏的是哪个函数、卡在哪一行（`result <- 42`）。原理是：跑一次特殊的 GC，如果一个 goroutine 阻塞在某个 channel 上，而这个 channel 已经没有任何还能运行的 goroutine 能访问到了，那它就再也不可能被唤醒，判定为泄漏。服务里引入了 `net/http/pprof` 的话，访问 `/debug/pprof/goroutineleak` 也能看到。
+它直接指出了泄漏的是哪个函数、卡在哪一行：第 15 行，`result <- 42`。原理是：跑一次特殊的 GC，如果一个 goroutine 阻塞在某个 channel 上，而这个 channel 已经没有任何还能运行的 goroutine 能访问到了，那它就再也不可能被唤醒，判定为泄漏。服务里引入了 `net/http/pprof` 的话，访问 `/debug/pprof/goroutineleak` 也能看到。
 
 **排查工具：**
 
@@ -694,7 +732,9 @@ context 代表的是**一次调用**的生命周期，而结构体通常活得�
 
 **追问：已经读进来、还没执行的请求，为什么不执行完再退出？**
 
-“执行完再退出”听起来更友好，但流水线里可能还有很多条，客户端也可能一直在发，停机就会被无限推迟。所以 Mini-Redis 的规则是：以“开始执行”为界，开始了的保证做完，没开始的一律不做。客户端没收到回复，就知道这条请求没有被执行，可以重试；这对 LPUSH 这种不能重复执行的命令尤其重要。
+“执行完再退出”听起来更友好，但流水线里可能还有很多条，客户端也可能一直在发，停机就会被无限推迟。所以 Mini-Redis 的规则是：以“开始执行”为界，开始了的在排空期限内尽量做完，没开始的一律不做。
+
+但要注意，**客户端没收到回复，并不能断定命令没执行**。比如一条 LPUSH 已经执行完、回复还没写出去，2 秒排空期限就到了，连接被强制关闭：客户端读到的是 EOF，列表里却已经多了一个元素。网络在回复途中断开也是一样。所以没收到回复时，结果是“未知”，LPUSH 这种执行两次结果就不同的命令，不能盲目重试。
 
 ---
 
@@ -724,8 +764,9 @@ context 代表的是**一次调用**的生命周期，而结构体通常活得�
 ## 关键设计与为什么
 
 **1. 以“开始执行”为界。**
-- 开始了的命令保证做完、把回复写完；没开始的一律不做，哪怕已经读进了缓冲区。
-- 客户端没收到回复，就能确定这条命令没有执行，可以安全地重试。LPUSH 这种执行两次结果就不同的命令，最需要这个保证。
+- 开始了的命令在 2 秒的排空期限内做完、把回复写完；没开始的一律不做，哪怕已经读进了缓冲区。
+- 这条规则让停机的结果是可以预期的：停机不会无限推迟，也不会去执行客户端以为“还在排队”的请求。
+- 它保证不了的是：客户端没收到回复时，命令一定没执行。排空超时、网络断开，都可能出现“执行了但回复没送到”。这时结果未知，LPUSH 这种命令不能盲目重试。
 
 **2. 停机检查和“标记正在执行”在同一把锁里。**
 - 这样“开始执行”和“开始停机”之间一定有先后，不存在两边都以为对方会处理的空档。`startConnection` 里登记连接、`wg.Add(1)` 也和 `stopping` 的检查放在同一把锁里，停机开始后不会再有新的 goroutine 加入等待。
@@ -767,13 +808,13 @@ go test ./server -run TestShutdownDrainsSingleInFlightReply -count=1
 FAIL
 ```
 
-这个测试只发一条 SET，让执行器卡住，执行中调用 `Shutdown`（最多等 2 秒），再放行执行器。正常情况下，回复写完、连接自己退出，`Shutdown` 不到一毫秒就返回 nil。少了这一道检查，连接写完回复后回到 Read 上等待；它不是空闲连接，`Shutdown` 不会关它，只能一直等到 2 秒超时。
+这个测试只发一条 SET，让执行器卡住，执行中调用 `Shutdown`（最多等 2 秒），再放行执行器。正常情况下，回复写完、连接自己退出，`Shutdown` 不到一毫秒就返回 nil。少了这一道检查，连接写完回复后回到 Read 上等待。这时它在 `s.conns` 里其实已经被标回了“空闲”，但 `Shutdown` 用的是停机开始那一刻拍下的快照：快照里它是“正在执行”，所以没有关它，之后也不会重新扫描。没人去关这个连接，`Shutdown` 只能一直等到 2 秒超时。
 
 这个测试是代码复核时补上的：当时的测试里，客户端总是一次发两条命令，第二条会被“执行前的检查”拦下，连接也就退出了。两道检查互相兜底，单删哪一道，原有的测试都发现不了。后来分别补了 `TestShutdownDrainsSingleInFlightReply` 和 [server/connection_test.go](../../server/connection_test.go) 的 `TestConnectionRejectsRequestAfterStopping`，各管一道。做完把代码改回来。
 
 **实验 2：用 goroutineleak 找出泄漏的 goroutine。**
 
-见八股 3 的例子：在泄漏的程序末尾加一行 `pprof.Lookup("goroutineleak").WriteTo(os.Stdout, 1)`，它会直接指出卡在哪一行。可以试着把服务端的某个 channel 改成永远不关闭，看看能不能用它找出来。
+运行八股 3 里那个完整的程序（需要 Go 1.27，或者 Go 1.26 加 `GOEXPERIMENT=goroutineleakprofile`），看它怎样指出卡住的那一行。再试着改一改：把 `make(chan int)` 换成 `make(chan int, 1)`，profile 里的泄漏数应该变成 0。
 
 ---
 
@@ -796,7 +837,7 @@ FAIL
 
 <details><summary>答案</summary>
 
-ctx 被取消 → 等待信号的 goroutine 调用 `Shutdown`（最多 2 秒）：标记停机、关闭监听、关闭空闲连接、等所有连接的 goroutine 退出 → `Accept` 返回错误，`Serve` 等 `Shutdown` 做完后返回 → `run` 等等待信号的 goroutine 退出 → defer 依次执行：取消 ctx 并等后台清理退出、关闭 AOF、关闭监听。
+ctx 被取消，后台清理马上退出，同时等待信号的 goroutine 调用 `Shutdown`：标记停机、关闭监听（`Accept` 随即返回错误）、关闭空闲连接、最多等 2 秒让执行中的连接写完 → `Shutdown` 做完，`Serve` 返回 → `run` 确认等待信号的 goroutine 结束 → defer 依次执行：确认后台清理已经退出、关闭 AOF（没有时间限制）、再关一次监听（第一次已经关过）。
 
 </details>
 
@@ -836,7 +877,7 @@ ctx 被取消 → 等待信号的 goroutine 调用 `Shutdown`（最多 2 秒）�
 
 <details><summary>答案</summary>
 
-都是 `chan struct{}`，都只用关闭来通知“某件事结束了”，从不发送数据：`ctx.Done()`、`cleanupDone`、`watchStop`、`watchDone`、`Server.done`、`finished`。传递请求这种“数据”的 channel 已经去掉了。
+项目自己创建的 channel 都是 `chan struct{}`，都只用关闭来通知“某件事结束了”，从不发送数据：`cleanupDone`、`watchStop`、`watchDone`、`Server.done`、`finished`，再加上 context 提供的 `ctx.Done()`。传递请求这种“数据”的 channel 已经去掉了。标准库给的 `ticker.C` 是例外，它传的是时间。
 
 </details>
 

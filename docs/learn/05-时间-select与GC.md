@@ -178,6 +178,8 @@ func main() {
 
 ### 1. 两个结构：一个 map，一个切片
 
+`shard` 定义在 [database/shard.go](../../database/shard.go)，`expiration` 定义在 expire.go：
+
 ```go
 type shard struct {
 	mu       sync.RWMutex
@@ -246,7 +248,7 @@ func (s *shard) purgeExpired(key string, now time.Time) bool {
 }
 ```
 
-- 读命令经 `lockRead` 调用它（第 04 章）；写命令在 `executeWrite` 里，对每个涉及的 key 先调用一次，再计算写计划；EXISTS 也会逐个调用。
+- GET、LRANGE、TTL 经 `lockRead` 调用它（第 04 章）；EXISTS 不走 `lockRead`，它用 `lockKeys` 拿写锁，再逐个 key 调用；写命令在 `executeWrite` 里，对每个涉及的 key 先调用一次，再计算写计划。
 - 数据和期限一起删，不能只删一个。
 - 惰性删除**不写 AOF**。重启时靠日志里记录的绝对过期时间，重放后自然还是过期的（第 06 章）。
 
@@ -332,7 +334,7 @@ func (e *Engine) cleanupExpired() int {
 
 **辅助标记（mark assist）**：如果某个 goroutine 分配内存太快，GC 标记跟不上，这个 goroutine 在分配时会被要求先帮着做一些标记工作。所以 GC 期间，分配得多的请求会变慢。
 
-**Green Tea GC**（Go 1.25 作为实验加入，Go 1.26 起默认开启）：算法仍然是三色标记，变化在**扫描的顺序**。以前是一个对象一个对象地扫描，在内存里到处跳；Green Tea 先把同一个内存页（span）上的待扫描对象攒起来，再一次扫描完，对 CPU 缓存更友好。这是对实现的优化，面试时讲清三色标记和写屏障就够了，能提一句会是加分项。
+**Green Tea GC**（Go 1.25 作为实验加入，Go 1.26 起默认开启）：算法仍然是三色标记，变化在**扫描的顺序**。以前是一个对象一个对象地扫描，在内存里到处跳；Green Tea 先把同一个 span（运行时管理内存的单位，由一个或几个连续的页组成，里面放同样大小的小对象）上的待扫描对象攒起来，再一次扫描完，对 CPU 缓存更友好。这是对实现的优化，面试时讲清三色标记和写屏障就够了，能提一句会是加分项。
 
 > **项目里没有直接体现，但面试常问**：三色标记、写屏障、各阶段的 STW，都在运行时内部。Mini-Redis 的代码里和 GC 直接相关的只有一处：大批 key 过期以后主动请求回收内存（八股 4）。
 
@@ -362,7 +364,7 @@ Windows 的计时精度较低，很短的阶段会显示成 0。
 
 **追问 1：Go 的 GC 为什么不分代、不压缩？**
 
-分代假设“大部分对象很快就死”，Go 的逃逸分析已经把很多短命对象放在了栈上，堆上分代带来的好处没那么大；而分代和压缩都要移动对象，需要更复杂的写屏障，还会让 cgo 传出去的指针失效。Go 选择了低延迟和实现简单。
+分代假设“大部分对象很快就死”，Go 的逃逸分析已经把很多短命对象放在了栈上，堆上分代带来的好处没那么大；分代通常还需要额外的写屏障来记录老对象指向新对象的指针。压缩要移动对象，会让 cgo 传出去的指针失效。分代和压缩是两个独立的选择，Go 两样都没做，选择了低延迟和实现简单。
 
 **追问 2：GC 的 STW 时间和堆大小有关吗？**
 
@@ -385,7 +387,7 @@ Windows 的计时精度较低，很短的阶段会显示成 0。
 ```
 
 - 把栈和全局变量算进去，是 Go 1.18 加的。
-- 有一个下限：4 MB × GOGC / 100。所以很小的程序，堆到 4 MB 之前不会 GC。
+- 按比例算出的目标有一个下限：4 MB × GOGC / 100。所以很小的程序，堆到 4 MB 之前不会因为“堆长大了”而触发 GC；手动调用、2 分钟定时、GOMEMLIMIT 是另外几条触发路径。
 
 **触发方式：**
 
@@ -463,7 +465,7 @@ func main() {
 ```
 
 - `moved to heap: p`：onHeap 里的 p 逃逸到了堆上。
-- onStack 里的 p 没有出现，说明它留在栈上。
+- onStack 里的 p 没有出现，说明编译器判断它不会逃逸，可以放在栈上（实际上也可能直接放在寄存器里，或者被优化掉）。
 - `can inline`：函数很小，会被内联到调用处。内联以后，编译器能看到更多上下文，有时能避免逃逸。
 
 **常见的逃逸原因：**
@@ -480,7 +482,7 @@ func main() {
 
 #### 项目里的例子
 
-- **写计划里的 `apply` 闭包会逃逸。** [database/write.go](../../database/write.go) 的 `planSet` 返回一个 `writePlan`，里面的 `apply` 是一个捕获了分片、key 和 value 的闭包，它在函数返回后才被调用，所以闭包和它捕获的变量都在堆上（动手实验 2 用 `-gcflags=-m` 亲眼看）。每条写命令多一次小分配，换来的是“先算计划、日志落盘后再执行”这个清楚的结构。这个取舍是值得的：开启 AOF 时写命令的耗时主要在 fsync 上，多一次分配完全可以忽略。
+- **写计划里的 `apply` 闭包会逃逸。** [database/write.go](../../database/write.go) 的 `planSet` 返回一个 `writePlan`，里面的 `apply` 是一个捕获了分片、key 和 value 的闭包，它在函数返回后才被调用，所以闭包和它捕获的变量都在堆上（动手实验 2 用 `-gcflags=-m` 亲眼看）。有实际效果的写命令因此多一次小分配（没有效果的写不生成 `apply`），换来的是“先算计划、日志落盘后再执行”这个清楚的结构。逃逸分析只说明“它在堆上”，每条命令实际分配几次，要看 benchmark 的 `allocs/op`。这个取舍是值得的：开启 AOF 时写命令的耗时主要在 fsync 上，多一次分配完全可以忽略。
 - **存储里的值本来就该在堆上。** SET 存的值要一直活到被删除，肯定逃逸，这不是问题。
 
 #### 常见追问
@@ -503,7 +505,7 @@ func main() {
 |---|---|---|
 | 数据结构不缩小 | map 删除后表不缩小；大数组被一个小切片引用着 | 必要时重建一个新 map 或拷贝出小切片，让旧的被回收 |
 | GC 还没运行 | 程序空闲，没有分配，到不了目标堆大小 | 等 2 分钟的强制 GC，或者主动 `runtime.GC()` |
-| 运行时留着内存复用 | 堆已经回收，但进程的内存占用没变 | 后台 scavenger 会逐步归还；`debug.FreeOSMemory()` 立刻归还 |
+| 运行时留着内存复用 | 堆已经回收，但进程的内存占用没变 | 后台 scavenger 会逐步归还；`debug.FreeOSMemory()` 强制 GC 并尽量立刻归还 |
 | 观察的指标 | RSS 不能及时反映归还 | Go 1.16 起 Linux 默认用 MADV_DONTNEED，RSS 会立刻下降（`GODEBUG=madvdontneed`） |
 
 用 `runtime.ReadMemStats` 可以分开看：`HeapAlloc` 是堆上已分配的字节数（包括还没回收的垃圾），`HeapReleased` 是已经还给操作系统的字节数。
@@ -512,7 +514,7 @@ func main() {
 
 这正是 Mini-Redis 后台清理任务要处理的问题：
 
-- **为什么要主动归还**：一个缓存服务，大批 key 过期以后可能正好没有什么写入，没有新分配，GC 就不会运行，过期数据占的内存一直不还。所以 `RunCleanup` 累计删除至少 32768 个 key（常量 `cleanupReclaimKeys`）、并且距离上次归还至少 5 秒（`cleanupReclaimInterval`）时，调用一次 `debug.FreeOSMemory()`。
+- **为什么要主动归还**：一个缓存服务，大批 key 过期以后可能正好没有什么写入，没有新分配，GC 就不会因为堆增长而运行（只能等 2 分钟一次的定时 GC），过期数据占的内存迟迟不还。所以 `RunCleanup` 累计删除至少 32768 个 key（常量 `cleanupReclaimKeys`）、并且距离上次归还至少 5 秒（`cleanupReclaimInterval`）时，调用一次 `debug.FreeOSMemory()`。
 - **为什么不每次都调用**：它会做一次完整的 GC，有 STW，也有 CPU 开销。所以设了数量和时间两道门槛。
 - **为什么在锁外调用**：GC 期间如果还拿着分片锁，所有访问这个分片的命令都要等 GC 结束。[database/cleanup_test.go](../../database/cleanup_test.go) 的 `TestLargeExpirationReclaimsOutsideShardLocks` 专门检查“归还内存发生在所有分片锁之外”。
 - **它还管不到的地方**：分片的 map 删除 key 以后不会缩小，所以能归还的主要是值（`[]byte`、链表节点）占的内存，map 自己的表还留着。这是 Go map 的特性，要彻底解决只能定期重建 map。Mini-Redis 没有做，因为 key 的数量通常会再涨回来，表会被复用。
@@ -559,16 +561,16 @@ Go 1.27 删除了 `asynctimerchan` 这个 GODEBUG 开关，旧的异步行为已
 
 #### 一分钟口述版
 
-> Redis 同时用两种策略。惰性删除：访问一个 key 时，先检查它过没过期，过期了就删掉，当作不存在。只用惰性删除的话，一个过期以后再也没人访问的 key 会永远占着内存，所以还有定期删除：后台定时从设置了过期时间的 key 里随机抽一批，删掉其中已过期的；如果这一批里过期的比例很高，说明过期的 key 还很多，就接着再抽一轮，同时限制每次执行的时间，防止阻塞正常请求。两种策略结合，CPU 和内存都能兼顾。即便如此，还是可能有过期 key 没被删掉，内存满了的时候，由内存淘汰策略（比如 LRU）兜底。
+> Redis 同时用两种策略。惰性删除：访问一个 key 时，先检查它过没过期，过期了就删掉，当作不存在。只用惰性删除的话，一个过期以后再也没人访问的 key 会永远占着内存，所以还有定期删除：后台定时检查一批设置了过期时间的 key，删掉其中已过期的；如果这一批里过期的比例很高，说明过期的 key 还很多，就接着再查一批，同时限制每次执行的时间，防止阻塞正常请求。早期版本是随机抽样，较新的版本（例如 7.2）改成用游标在过期字典里逐段扫描。两种策略结合，CPU 和内存都能兼顾。内存用满时怎么办是另一回事，由 `maxmemory-policy` 决定：可以按 LRU 等规则淘汰 key，也可以配置成 `noeviction`，直接拒绝写入。
 
 #### 和 Mini-Redis 对照
 
 | | Redis | Mini-Redis |
 |---|---|---|
 | 惰性删除 | 访问时检查 | 一样：读命令通过 `lockRead` 检查，写命令在执行前清理过期的 key |
-| 定期删除 | 后台定时随机抽样；过期比例高就继续抽；有时间上限 | 每 250 毫秒，每个分片最多随机检查 256 次；不根据过期比例追加 |
-| 随机抽样怎样做到 O(1) | 从哈希表里随机取 | 每个分片维护一个“设置了期限的 key”的切片，随机取下标；删除时用最后一个元素填补空位，也是 O(1) |
-| 内存满了 | 按 maxmemory 策略淘汰 | 不支持 |
+| 定期删除 | 后台定时检查一批（7.2 用游标逐段扫描过期字典）；过期比例高就继续；有时间上限 | 每 250 毫秒，每个分片最多随机检查 256 次；不根据过期比例追加 |
+| 怎样挑出要检查的 key | 早期从哈希表里随机取，7.2 按游标顺序扫描 | 每个分片维护一个“设置了期限的 key”的切片，随机取下标；删除时用最后一个元素填补空位，也是 O(1) |
+| 内存满了 | 按 `maxmemory-policy` 淘汰 key，或者拒绝写入 | 不支持 |
 
 **为什么每个分片最多检查 256 次**：清理要拿分片的写锁，检查次数不设上限的话，一个有几百万个过期 key 的分片会被锁住很久，所有访问它的命令都要等。设了上限，一轮清不完就留给下一轮，换来的是请求延迟可控。
 
@@ -623,9 +625,9 @@ gc 18 @11.311s 0%: 0+0.51+0 ms clock, 0+0/1.5/0+0 ms cpu, 34->34->14 MB, 68 MB g
 
 - **gc 15 之前**：写入 10 万个 key 时，堆不断变大，GC 按目标堆大小自动触发了十几次。
 - **gc 16 @0.148s (forced)**：测试写完以后主动调用 `runtime.GC()`，记下此时存活的堆，43 MB。
-- **0.148s 到 7.004s 之间一次 GC 都没有**：测试只是在等，几乎不分配内存，GC 就不会自己运行。这就是八股 4 说的“删了数据，GC 却还没运行”。
+- **0.148s 到 7.004s 之间一次 GC 都没有**：测试只是在等，几乎不分配内存，这段时间里没有观察到自动触发的 GC。这就是八股 4 说的“删了数据，GC 却还没运行”。
 - **gc 17 @7.004s (forced)**：key 在 5 秒左右开始过期，后台清理删到第 32768 个时，调用了 `debug.FreeOSMemory`，于是有了这次强制 GC。存活的堆从 43 MB 降到 34 MB。
-- **gc 18 @11.311s (forced)**：10 万个 key 全部删完后，测试再调用一次 `runtime.GC()`，存活的堆降到 14 MB。剩下的主要是 map 自己的表，它不会缩小（日志里的 “map capacity may remain”）。
+- **gc 18 @11.311s (forced)**：10 万个 key 全部删完后，测试再调用一次 `runtime.GC()`，存活的堆降到 14 MB。剩下的这 14 MB 里有 map 自己的表，删了 key 它也不会缩小（日志里的 “map capacity may remain”）；具体各占多少，这次实验没有测，要用 heap profile 按分配位置看。
 - 两次强制 GC 之间相隔 4 秒多，不到 5 秒，所以清理任务没有再调用第二次 `FreeOSMemory`。
 - 从开始过期到全部删完，大约用了 6 秒。可以算一下：每轮每个分片最多抽 256 次，16 个分片就是 4096 次，每秒 4 轮，大约每秒删 1.6 万个，10 万个要 6 秒左右。
 
@@ -651,7 +653,7 @@ database/write.go:208:25: value does not escape
 - `value escapes to heap`：SET 的值要存进 map，一直活到被删除，本来就该在堆上。
 - `StatusReply("OK")` 和 `int64(...)` 也逃逸了：它们被装进了 `writePlan.reply` 这个 `any` 字段。这就是第 03 章说的“值装进接口可能要分配”。
 - `&node{...}`：链表节点要一直挂在列表上，也在堆上。
-- 最后一行是反例：`parseExpirySeconds` 的参数 `value` 只在函数里读一下，就留在了栈上。
+- 最后一行是反例：`parseExpirySeconds` 的参数 `value` 只在函数里读一下，没有经过这个函数逃逸出去。注意这只说明“这个函数不会让它逃逸”：调用者传进来的字节本身可能就在堆上。
 
 ---
 
@@ -661,7 +663,7 @@ database/write.go:208:25: value does not escape
 - **以为 select 会按 case 的书写顺序优先。** 多个就绪时是随机的。需要优先级，要写两层 select。
 - **在 for-select 里用 `time.After` 做超时，并且以为每次循环都会泄漏。** Go 1.23 起不会泄漏了；但每次循环都新建计时器，超时是从这次循环开始算的，不是从整个操作开始算，这一点仍然要注意。
 - **以为 STW 时间和堆大小成正比。** 现在的 STW 通常在 1 毫秒以内，和堆大小基本无关。
-- **以为 `runtime.GC()` 之后内存一定会还给操作系统。** 要立刻归还，用 `debug.FreeOSMemory()`。
+- **以为 `runtime.GC()` 之后内存一定会还给操作系统。** 要尽快归还，用 `debug.FreeOSMemory()`，它会强制 GC 并尽量把空闲内存还给操作系统。
 - **为了避免逃逸，把代码改得很难读。** 先测量，确认是热点再优化。
 
 ---
@@ -712,7 +714,7 @@ map 用来按 key 查期限；切片用来随机抽样，随机取一个下标�
 
 <details><summary>答案</summary>
 
-闭包在 `planSet` 返回以后才被调用，它捕获的分片、key、value 要活得比 `planSet` 更久，编译器只能把它们放到堆上。每条写命令多一次小分配，换来“先算计划、日志落盘后再执行”的清楚结构，开启 AOF 时和 fsync 比起来可以忽略。
+闭包在 `planSet` 返回以后才被调用，它捕获的分片、key、value 要活得比 `planSet` 更久，编译器只能把它们放到堆上。有实际效果的写命令因此多一次小分配，换来“先算计划、日志落盘后再执行”的清楚结构，开启 AOF 时和 fsync 比起来可以忽略。
 
 </details>
 
@@ -724,7 +726,7 @@ map 用来按 key 查期限；切片用来随机抽样，随机取一个下标�
 
 - **2026-10-01，`3d95ea3`，第一阶段完成。** 一次加入了 EXPIRE、TTL、惰性删除、后台抽样清理，以及“末项补洞、清空旧末项”的抽样切片。大批过期后锁外调用 `debug.FreeOSMemory` 也是这时加的。期限写进 AOF 时记的是绝对毫秒时间 `__EXPIREATMS`，重启不会让 key 多活。
 - **2026-10-02，`fbbce11`，修复重放边界。** 复审发现惰性删除不写日志，会让重放结果和运行时不一致：一个列表过期后被惰性删掉，又用 LPUSH 新建，日志里却只记了 LPUSH，重放时旧元素和旧期限会混进来。修复办法是新增私有记录 `_LNEW`，表示“这是一个全新的列表”（第 06 章细讲）。
-- **2026-11-10，PR #5，可读性改造。** `ttl.go` 改名为 `expire.go`，`lockRead` 从引擎文件移进来，和过期相关的代码都在一个文件里；注释改成讲为什么，比如“为什么要清空旧末项”“为什么在锁外归还内存”。
+- **2026-11-10，PR #5，可读性改造。** `ttl.go` 改名为 `expire.go`，过期索引、`lockRead`、惰性删除和后台清理都在这个文件里；TTL 命令本身移到 read.go，和其他读命令放在一起；解析期限的 `parseExpirySeconds` 移到 write.go。注释改成讲为什么，比如“为什么要清空旧末项”“为什么在锁外归还内存”。
 
 ---
 
@@ -737,7 +739,8 @@ map 用来按 key 查期限；切片用来随机抽样，随机取一个下标�
 | 内存上限下 GC 的 CPU 上限约 50% | `runtime/mgclimit.go` 开头的注释 |
 | 混合写屏障：Yuasa 删除屏障 + Dijkstra 插入屏障 | `runtime/mbarrier.go`：“Go uses a hybrid barrier that combines a Yuasa-style deletion barrier … with Dijkstra insertion barrier” |
 | Green Tea：按 span 攒批扫描，提高局部性；在 1.27.1 中默认开启 | `runtime/mgcmark_greenteagc.go` 开头的注释；`internal/buildcfg/exp.go`：`GreenTeaGC: true` |
-| Green Tea 在 Go 1.25 作为实验加入，1.26 默认开启 | Go 1.25、Go 1.26 release notes（定稿前由 GPT 核对） |
+| Green Tea 在 Go 1.25 作为实验加入（`GOEXPERIMENT=greenteagc`），1.26 默认开启 | [Go 1.25 发布说明](https://go.dev/doc/go1.25)、[Go 1.26 发布说明](https://go.dev/doc/go1.26)、[Go 博客：Green Tea](https://go.dev/blog/greenteagc) |
+| Redis 7.2 的主动过期用游标扫描 | [Redis 7.2 的 expire.c](https://github.com/redis/redis/blob/7.2/src/expire.c)；淘汰策略见 [Key eviction](https://redis.io/docs/latest/develop/reference/eviction/) |
 | 目标堆大小公式 | `runtime/mgcpacer.go`：`gcPercentHeapGoal = c.heapMarked + (c.heapMarked+c.lastStackScan.Load()+c.globalsScan.Load())*uint64(gcPercent)/100` |
 | 堆的下限 4 MB × GOGC / 100 | `runtime/mgcpacer.go` 中 `heapMinimum` 的注释 |
 | 2 分钟强制 GC | `runtime/proc.go`：`forcegcperiod int64 = 2 * 60 * 1e9` |

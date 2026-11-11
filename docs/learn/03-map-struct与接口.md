@@ -34,7 +34,7 @@ mini-redis> EXISTS k k missing
 (integer) 2
 ```
 
-同一个 key 只能是一种类型：存的是字符串，就不能当列表用，反过来也一样。引擎里只有一个 map，值的类型是 `any`，每次取出来都要先问一句“你是不是我要的类型”，答案是否定的就返回 `WRONGTYPE`。这句“问一句”就是本章要讲的类型断言。
+同一个 key 只能是一种类型：存的是字符串，就不能当列表用，反过来也一样。每个分片用同一个 `data` map 存字符串和列表，值的类型是 `any`，每次取出来都要先问一句“你是不是我要的类型”，答案是否定的就返回 `WRONGTYPE`。这句“问一句”就是本章要讲的类型断言。
 
 `EXISTS k k missing` 返回 2：同一个 key 写两次就数两次，这是 Redis 的规定。
 
@@ -82,7 +82,7 @@ func main() {
 // a=1 b=2 c=3
 ```
 
-**map 的 key 必须是可比较的类型**：数字、字符串、布尔、指针、channel、接口，以及只由这些组成的数组和结构体。切片、map、函数不能作 key，编译时就会报错。
+**map 的 key 必须是可比较的类型**：数字、字符串、布尔、指针、channel、接口，以及只由这些组成的数组和结构体。切片、map、函数不能作 key，`map[[]byte]int` 这样写编译时就会报错。有一个例外：key 的类型是接口（比如 `map[any]int`）时，编译能通过，但如果运行时塞进去的值是切片这类不可比较的类型，会 panic。
 
 **map 的元素不能取地址**：`&m["k"]` 编译报错。原因是 map 扩容时会搬动元素，地址会失效。所以值是结构体时，`m["k"].Count++` 也不行，要么整个取出来、改完再存回去，要么值改用指针。
 
@@ -270,7 +270,7 @@ type shard struct {
 ```
 
 - 数据分散在多个分片里，每个分片有一把读写锁和自己的 map。为什么要分片，第 04 章讲。
-- `data` 的值是 `any`：字符串存 `[]byte`，列表存 `*linkedList`。一个 key 只能在一个 map 里，所以不可能既是字符串又是列表。
+- `data` 的值是 `any`：字符串存 `[]byte`，列表存 `*linkedList`。同一个分片里的字符串和列表共用这一个 map，一个 key 只能有一个值，所以不可能既是字符串又是列表。
 - `expires` 记录哪些 key 有过期时间；`expiring` 是同一批 key 的切片，供后台随机抽查（第 05 章）。
 - `now` 和 `reclaim` 是两个函数类型的字段，平时分别是 `time.Now` 和 `debug.FreeOSMemory`。测试里把 `now` 换成一个可以手动拨动的时钟，就能测“5 秒后过期”而不用真的等 5 秒。函数也是值，可以存进结构体，这比专门定义一个时钟接口更省事。
 - `shards` 是 `[]*shard`，存的是指针：每个分片里有锁，锁不能被拷贝。
@@ -313,7 +313,7 @@ if !fresh {
 ```
 
 - `raw.(*linkedList)` 带 ok 的类型断言：值确实是列表，ok 为 true；是字符串，ok 为 false，返回 `WRONGTYPE`，不会 panic。
-- [database/read.go](../../database/read.go) 的 `get` 反过来断言 `value.([]byte)`。所有读写命令都是这样先断言、再操作。
+- [database/read.go](../../database/read.go) 的 `get` 反过来断言 `value.([]byte)`。要按类型操作值的命令（GET、LRANGE、LPUSH、LPOP）都是这样先断言、再操作。SET 不管原来是什么类型，直接覆盖；DEL、EXISTS、TTL 只关心 key 在不在，不看值的类型。
 
 ### 4. 四个接口，都定义在使用它的一方
 
@@ -359,7 +359,7 @@ default:
 
 #### 一分钟口述版
 
-> Go 1.24 起，map 改用了 Swiss Table 的设计。数据按“组”存放，每组 8 个槽位，外加一个 8 字节的控制字，每个字节对应一个槽位，记录这个槽是空的、已删除，还是存了 key；存了 key 的，还保存 key 哈希值的低 7 位。查找时先用哈希的高位定位到一组，再用一次位运算把 8 个控制字节和目标的低 7 位同时比较，只对匹配上的槽位做真正的 key 比较。这组没有、并且组里没有空槽，就按二次探测去下一组找。为了避免扩容时一次搬动太多数据，一个 map 被拆成多张表，每张表最多 1024 个槽，表满了就自己翻倍或者一分为二，用哈希的最高几位决定 key 属于哪张表。在这之前，Go 的 map 是“桶加溢出链”的结构：每个桶 8 个 key，装不下就挂溢出桶，平均负载超过 6.5 就扩容，扩容时边写边搬。很多面试题还在问旧实现，两种都要能讲。
+> Go 1.24 起，map 改用了 Swiss Table 的设计。数据按“组”存放，每组 8 个槽位，外加一个 8 字节的控制字，每个字节对应一个槽位，记录这个槽是空的、已删除，还是存了 key；存了 key 的，还保存 key 哈希值的低 7 位。查找时先用哈希的高位定位到一组，再用一次位运算把 8 个控制字节和目标的低 7 位同时比较，只对匹配上的槽位做真正的 key 比较。这组没有、并且组里没有空槽，就按二次探测去下一组找。为了避免扩容时一次搬动太多数据，一个 map 被拆成多张表，每张表最多 1024 个槽，表满了就自己翻倍或者一分为二，用哈希的最高几位决定 key 属于哪张表。在这之前，Go 的 map 是“桶加溢出链”的结构，以 Go 1.23 为例：每个桶 8 个 key，装不下就挂溢出桶，平均负载超过 6.5 就扩容，扩容时边写边搬。很多面试题还在问旧实现，两种都要能讲。
 
 #### 要点
 
@@ -376,14 +376,14 @@ default:
 - **查找**：用哈希的高 57 位（H1）定位起始的组 → 用 H2 和控制字一次比较 8 个槽 → 对匹配的槽比较真正的 key → 没找到、而且这组还有空槽，说明 key 不存在；没有空槽就按二次探测去下一组。
 - **负载上限**：平均每组最多用 7 个槽（7/8），超过就扩容。
 - **扩容**：一张表还没到 1024 个槽时，换成一张两倍大的新表；到了上限就**一分为二**。每次扩容只动一张表，不会一次搬整个 map。
-- **删除**：如果这组已经满了，删除时只能把槽标成“已删除”（墓碑），不能标成“空”，否则查找会提前停下，漏掉探测序列后面的 key。墓碑在扩容时才被清理。
-- **小 map**：不超过 8 个元素时只有一个组，连表都不用建。
+- **删除**：如果这组已经满了，删除时只能把槽标成“已删除”（墓碑），不能标成“空”，否则查找会提前停下，漏掉探测序列后面的 key。墓碑会在之后插入时被复用；表快满时，会先尝试原地清理墓碑，不够再扩容。
+- **小 map**：一开始预计的元素不超过 8 个时，只用一个组，连表都不用建。小 map 长大以后会变成表，之后元素再删到 8 个以下，也不会退回去。
 
-**Go 1.23 及之前：桶加溢出链**（面试常问）
+**Go 1.23 及之前：桶加溢出链**（面试常问，下面的数字以 Go 1.23 的源码为准）
 
 - `hmap` 指向一个桶数组，桶的个数是 2 的幂。每个桶存 8 个 key 和 8 个 value，外加 8 个 tophash（哈希的高 8 位），用来快速排除。
 - 一个桶满了，就挂一个**溢出桶**，形成链表。
-- 平均每个桶超过 6.5 个元素，就把桶数翻倍；溢出桶太多但元素不多时，做一次等量扩容来整理。
+- 平均每个桶超过 6.5 个元素，就把桶数翻倍；溢出桶太多但元素不多时，做一次等量扩容来整理。更早的版本里，这个阈值的计算方式略有不同，不要一概而论。
 - 扩容是**渐进式**的：不一次搬完，之后每次写入时顺便搬一两个桶。
 
 **为什么换实现**：Swiss Table 用一次位运算比较 8 个槽，查找更快；数据是连续存放的，对 CPU 缓存更友好；也没有溢出链表的指针跳转。
@@ -416,7 +416,7 @@ Redis 的 dict 有两张表，扩容时新建一张两倍大的表，之后每�
 
 #### 一分钟口述版
 
-> Go 的 map 不是并发安全的。多个 goroutine 同时写，或者一边读一边写，内部结构可能被改坏。所以运行时在 map 里放了一个“正在写”的标记：写操作开始时设置，结束时清除；如果另一个操作发现这个标记已经被设置了，就直接报 `fatal error: concurrent map writes`，终止整个程序。注意这是 fatal error，不是 panic，recover 接不住。之所以设计得这么严厉，是因为数据已经可能损坏了，带着坏数据继续跑更危险。解决办法有三种：用一把互斥锁或读写锁保护 map；用 sync.Map；或者像 Mini-Redis 这样，把数据按 key 分到多个分片，每个分片一个 map 一把锁，减少竞争。
+> Go 的 map 不是并发安全的。多个 goroutine 同时写，或者一边读一边写，内部结构可能被改坏。所以运行时在 map 里放了一个“正在写”的标记：写操作开始时设置，结束时清除；如果另一个操作发现这个标记已经被设置了，就直接报 fatal error，终止整个程序：两个写撞上了，报 `concurrent map writes`；一读一写撞上了，报 `concurrent map read and map write`。注意这是 fatal error，不是 panic，recover 接不住。之所以设计得这么严厉，是因为数据已经可能损坏了，带着坏数据继续跑更危险。解决办法有三种：用一把互斥锁或读写锁保护 map；用 sync.Map；或者像 Mini-Redis 这样，把数据按 key 分到多个分片，每个分片一个 map 一把锁，减少竞争。
 
 #### 要点
 
@@ -545,7 +545,7 @@ func main() {
 
 - **CommandLog 接口定义在 database 包里**（[database/replay.go](../../database/replay.go)），只有一个 `Append` 方法。aof 包的 Store 有这个方法，就自动实现了它，aof 包不需要 import database。这样 database 不依赖 aof，aof 也不依赖 database，没有循环依赖；测试里还可以塞一个只记录参数的假日志，[database/golden_test.go](../../database/golden_test.go) 固定 AOF 记录序列，就是这样做的。
 - **两个包互不 import，却能对上接口**：`StatusReply` 定义在 database 包里，有一个 `RESPStatus() string` 方法。[resp/reply.go](../../resp/reply.go) 的 `EncodeReply` 在 type switch 里写的是一个匿名接口 `case interface{ RESPStatus() string }:`，只要求“有这个方法”。于是 database 不需要 import resp，resp 也不需要 import database，SET 返回的 `StatusReply("OK")` 照样被编码成 `+OK`。这就是隐式实现的好处：接口由使用方按需定义，提供方不用知道它。
-- **回复类型靠 type switch 编码**：`EncodeReply` 按执行结果的动态类型选择 RESP 类型：实现了状态接口的输出 `+OK`，`int64` 输出整数，`[]byte` 输出 bulk，`[][]byte` 输出数组，`nil` 输出空值。早期版本里 SET 返回 Go 的 `true`，编码器把 `true` 翻译成 `+OK`，而整数回复有时是 `int`、有时是 `int64`。改造时统一成 `StatusReply` 和 `int64`，去掉了 `bool` 和 `int` 两个分支，让“Go 类型 → 协议类型”的对应关系只在一处定义。
+- **回复类型靠 type switch 编码**：`EncodeReply` 按执行结果的动态类型选择 RESP 类型：实现了状态接口的输出 `+状态文本`（SET 返回的是 `+OK`，无参数的 PING 返回的是 `+PONG`），`int64` 输出整数，`[]byte` 输出 bulk，`[][]byte` 输出数组，`nil` 输出空值。早期版本里 SET 返回 Go 的 `true`，编码器把 `true` 翻译成 `+OK`，而整数回复有时是 `int`、有时是 `int64`。改造时统一成 `StatusReply` 和 `int64`，去掉了 `bool` 和 `int` 两个分支，让“Go 类型 → 协议类型”的对应关系只在一处定义。
 - **引擎的 value 是 `any`**：取出来以后用 `raw.(*linkedList)` 断言是不是列表，不是就返回类型错误（`WRONGTYPE`）。
 - server 包只依赖一个只有 `Exec` 方法的 `Executor` 接口（[server/server.go](../../server/server.go)），不依赖具体的引擎。
 
@@ -608,7 +608,7 @@ var _ CommandLog = Store{}  // 编译错误：Store does not implement CommandLo
 | | Redis | Mini-Redis |
 |---|---|---|
 | String | SDS（带长度和空闲空间的动态字符串），小整数还会直接编码成整数 | `[]byte` |
-| List | quicklist：一串 listpack（紧凑的连续内存块）连成的双向链表 | 普通的双向链表，每个节点一个值 |
+| List | 以 Redis 7.2 为例：元素少而且都很短时，直接用一个 listpack（紧凑的连续内存块）；变大以后转成 quicklist，也就是一串 listpack 连成的双向链表 | 普通的双向链表，每个节点一个值 |
 | 整个 key 空间 | 一个哈希表（dict），渐进式扩容 | 16 个分片，每个分片一个 Go map |
 
 Redis 的选择都是在省内存、对 CPU 缓存友好：一个元素一个节点的链表，指针本身就要占不少空间，而且节点散落在内存各处。Mini-Redis 是学习项目，选了最直观的结构，把重点放在并发、持久化和协议上。面试时被问到“为什么不像 Redis 那样做”，可以这样回答：先保证正确和清楚，性能瓶颈测出来了再优化。
@@ -617,8 +617,8 @@ Redis 的选择都是在省内存、对 CPU 缓存友好：一个元素一个节
 
 ## 关键设计与为什么
 
-**1. 一个 `map[string]any` 存所有类型，取出时做类型断言。**
-- 为什么：Redis 规定一个 key 只能有一种类型。只有一个 map，就从结构上保证了这一点，不会出现同一个 key 既在字符串表里、又在列表表里的情况。
+**1. 每个分片用一个 `map[string]any` 存所有类型的值，取出时做类型断言。**
+- 为什么：Redis 规定一个 key 只能有一种类型。字符串和列表共用同一个 map，就从结构上保证了这一点，不会出现同一个 key 既在字符串表里、又在列表表里的情况。
 - 代价：每次访问都要做一次类型断言；`[]byte` 存进 `any` 时还要多一层包装。和网络 IO 比，这点开销可以忽略。
 - 放弃了什么：用两个 map 分别存字符串和列表，类型更明确，但每次写入都要检查另一个 map 里有没有同名的 key，容易漏。
 
@@ -651,7 +651,7 @@ func (e *Engine) Exec(args [][]byte) (any, error) {
 database\engine.go:41:9: Exec passes lock by value: github.com/Li-Nepenthe/mini-redis/database.Engine contains sync.Mutex
 ```
 
-Engine 里有 `logMu sync.Mutex`，值接收者会把整个 Engine 连同锁复制一份，每次调用锁的都是副本，等于没锁。编译器不会拦你，vet 会。做完改回来。
+Engine 里有 `logMu sync.Mutex`，值接收者会把整个 Engine 连同这把锁复制一份，每次调用锁的都是自己那份副本，`logMu` 就失去了作用：开启 AOF 时，写命令不再按顺序排队写日志。分片锁倒是不受影响，因为 `shards` 存的是 `*shard` 指针，副本里的指针指向的还是同一批分片。编译器不会拦你，vet 会。做完改回来。
 
 **实验 2：把各种 Go 类型交给 EncodeReply。**
 
@@ -834,7 +834,9 @@ Go 的接口是隐式实现的：一个类型只要有接口要求的全部方�
 | eface、iface | `runtime/runtime2.go` |
 | itab 的字段 | `internal/abi/iface.go`：`type ITab struct` |
 | Go 1.24 改用 Swiss Table；Go 1.24 改写 sync.Map | Go 1.24 release notes |
-| 旧实现：桶 8 个、负载因子 6.5、渐进式搬迁 | Go 1.23 的 `runtime/map.go`（本机没有 1.23 源码，定稿前由 GPT 核对） |
+| 旧实现：桶 8 个、负载因子 6.5、渐进式搬迁（以 Go 1.23.0 为准） | [Go 1.23.0 的 runtime/map.go](https://github.com/golang/go/blob/go1.23.0/src/runtime/map.go)、[internal/abi/map.go](https://github.com/golang/go/blob/go1.23.0/src/internal/abi/map.go) |
+| 墓碑复用和原地清理、并发读写的两种报错 | `internal/runtime/maps/table.go`（“first try to remove some tombstones”）；`internal/runtime/maps/map.go` 的 `fatal` 调用 |
+| Redis 7.2 的列表编码 | [Redis 7.2 的 t_list.c](https://github.com/redis/redis/blob/7.2/src/t_list.c) |
 | `hash/fnv` 的 New32 是 FNV-1，与 `fnv32` 结果相同，二者都不分配 | `hash/fnv/fnv.go`：`sum32.Write` 先乘后异或；2026-11-10 实验 3 实测 |
 | copylocks 的报错、EncodeReply 对各类型的输出、分片分布 | 2026-11-10 在 dbd2e9f 上实际运行 |
 | 早期引擎结构、旧的 bool/int 回复分支 | `git show 94042f3:database/Engine.go`、`git show 31684b7:resp/reply.go` |
